@@ -4,13 +4,16 @@
   "description": "Practice client-journey app: engagement to sign-off (BYH + ITC merge). Phase 1 foundations.",
   "main": "server.js",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node migrations/run.js && node server.js",
     "migrate": "node migrations/run.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "pg": "^8.12.0"

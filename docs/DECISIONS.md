@@ -20,6 +20,12 @@
 - **Roles:** practice manager, therapist, client. (BYH's current `admin` is a platform operator who
   never sees client data; practice manager is new.)
 
+- **Access (2026-11-13):** practice managers never see clinical data; only therapists do. One person may hold both
+  roles and chooses which to act in. Staff sign in with an emailed passcode; clients with an emailed link. Login emails
+  send from `notifications@khitservices.co.uk` (existing Graph registration) while in test.
+- **Phase 2 split:** 2a identity and access; 2b clinical core (clients, programmes/sessions, calendar, journal, files);
+  2c reminders (weekly journal, appointment reminders, daily digest).
+
 ## Phases
 
 1. Foundations (this branch)

@@ -5,8 +5,20 @@ BYH/Stillpoint journal and practice management and the ITC contact/agreement wor
 Roles per instance: practice manager, therapist, client. Practice identity is configured per
 instance (see `.env.example`).
 
-**Status: phase 1, foundations only.** This branch runs a health check, applies migrations and
-provides encrypted document storage. No practice features yet.
+**Status: phase 2a (identity and access).** Sign-in, roles and an audit log, with empty landing screens
+per role. Clients, sessions, journal and the enquiry pipeline come in later phases.
+
+## Access model
+
+- **Practice manager:** enquiries, bookings, sources, schedules. Never clinical content.
+- **Therapist:** the only role that sees clinical data. One person can hold both roles but acts in one at a time
+  (they choose after signing in; the choice is audited).
+- **Client:** their own record only.
+- **Staff sign in** with a 6-digit emailed code (10 minutes, 5 attempts). **Clients** use an emailed link (15 minutes,
+  single use, with a confirm button so mail scanners can't use it up), and an installed phone app can complete its own
+  sign-in. Sessions: 30 minutes idle, 12 hours maximum. All secrets are stored hashed. Sign-ins and role choices are logged.
+- Staff and clients are added with `scripts/create-staff.js` and `scripts/create-client.js` until the admin screens exist:
+  `docker compose exec app node scripts/create-staff.js "Name" email --therapist --practice-manager`
 
 ## Stack
 
@@ -16,7 +28,8 @@ so it can move to another VPS by redeploying and restoring data.
 
 ## Data areas
 
-Four Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`):
+Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`):
+`core` (staff, sessions, sign-in tokens, audit log),
 `engagement` (enquiries, source tracking), `clinical` (clients, sessions, journal, consent),
 `documents` (document metadata), `commerce` (reserved: bookings, vouchers, payments).
 
@@ -26,7 +39,8 @@ Target: `practice.betteryouhypnotherapy.co.uk`, app on `127.0.0.1:8100`.
 
 1. **DNS (Fasthosts, BYH domain):** add an `A` record `practice` -> VPS2's IP. Use a low TTL.
 2. **Code:** `git clone` this repo to `/opt/byh-flow` and check out the branch.
-3. **Secrets:** `cp .env.example .env && chmod 600 .env`, then fill in:
+3. **Secrets:** `cp .env.example .env && chmod 600 .env`, then fill in `SESSION_SECRET` (`openssl rand -hex 32`),
+   the Graph values and `GRAPH_SENDER`, and:
    - `POSTGRES_PASSWORD`: `openssl rand -hex 24` (hex only: it goes into a connection URL, so avoid base64)
    - `FILE_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Store a copy away from this server and
      its backups.** Lose it and stored documents are unreadable.
