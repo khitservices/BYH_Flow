@@ -1,0 +1,46 @@
+# Isolated stack for the practice app. Nothing here is shared with the KHIT apps on VPS2:
+# own containers, own network, own volumes, own Postgres, own secrets.
+# Only the app is published, and only on localhost; nginx fronts it.
+name: byh-flow
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      STORAGE_DIR: /data/files
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-8100}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - files:/data/files
+    networks: [internal]
+
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # No published ports: reachable only from the app over the internal network.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+volumes:
+  pgdata:
+  files:
+
+networks:
+  internal:
