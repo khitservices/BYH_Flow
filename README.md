@@ -27,7 +27,7 @@ Target: `practice.betteryouhypnotherapy.co.uk`, app on `127.0.0.1:8100`.
 1. **DNS (Fasthosts, BYH domain):** add an `A` record `practice` -> VPS2's IP. Use a low TTL.
 2. **Code:** `git clone` this repo to `/opt/byh-flow` and check out the branch.
 3. **Secrets:** `cp .env.example .env && chmod 600 .env`, then fill in:
-   - `POSTGRES_PASSWORD`: `openssl rand -base64 24`
+   - `POSTGRES_PASSWORD`: `openssl rand -hex 24` (hex only: it goes into a connection URL, so avoid base64)
    - `FILE_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Store a copy away from this server and
      its backups.** Lose it and stored documents are unreadable.
 4. **Start:** `docker compose up -d --build`, then `curl -s localhost:8100/healthz` -> `{"status":"ok"}`.
