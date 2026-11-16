@@ -39,7 +39,7 @@ function client() {
   };
   return { get: p => call('GET', p), post: (p, f) => call('POST', p, f), jar };
 }
-const addStaff = (n, pm, th) => q(`INSERT INTO core.staff (name,email,is_practice_manager,is_therapist) VALUES ($1,$2,$3,$4) RETURNING *`, [n, em(n), pm, th]).then(r => r[0]);
+const addStaff = async (n, pm, th) => { let first; for (const role of [th && 'therapist', pm && 'practice_manager'].filter(Boolean)) { const [r] = await q(`INSERT INTO core.staff (name,email,role) VALUES ($1,$2,$3) RETURNING *`, [n, em(n), role]); first = first || r; } return first; };
 const lastCode = to => { const m = [...mail.outbox].reverse().find(x => x.to === to); return m && m.html.match(/>(\d{6})</)[1]; };
 async function staffLogin(c, email) {
   await c.post('/staff/request-code', { email });
@@ -61,15 +61,25 @@ test('practice manager (not a therapist) is refused clinical routes', { skip }, 
   assert.equal((await c.get('/therapist')).status, 403);
 });
 
-test('dual-role staff must choose, and only therapist role reaches clinical', { skip }, async () => {
-  const s = await addStaff('both', true, true); const c = client();
-  const r = await staffLogin(c, s.email);
-  assert.equal(r.loc, '/choose-role');
-  assert.equal((await c.get('/therapist')).status, 302); // no role chosen yet
-  await c.post('/choose-role', { role: 'practice_manager' });
-  assert.equal((await c.get('/therapist')).status, 403);
-  await c.post('/choose-role', { role: 'therapist' });
-  assert.equal((await c.get('/therapist')).status, 200);
+test('one address with two accounts: one code, choose an account, and the accounts stay separate', { skip }, async () => {
+  const th = await addStaff('both', true, true); const c = client();
+  const [mgr] = await q(`SELECT * FROM core.staff WHERE email=$1 AND role='practice_manager'`, [th.email]);
+  const r = await staffLogin(c, th.email);
+  assert.equal(r.loc, '/choose-account');
+  assert.equal((await c.get('/therapist')).status, 302); // the code alone opens nothing
+  assert.equal((await c.get('/practice')).status, 302);
+  const other = await addStaff('someoneelse', false, true);
+  assert.equal((await c.post('/choose-account', { account: other.id })).status, 403); // cannot pick another person's account
+  assert.equal((await c.get('/therapist')).status, 302);
+  const c2 = client(); await staffLogin(c2, th.email);
+  assert.equal((await c2.post('/choose-account', { account: mgr.id })).loc, '/practice');
+  assert.equal((await c2.get('/therapist')).status, 403); // manager account never reaches clinical
+  assert.equal((await c2.post('/choose-account', { account: th.id })).loc, '/staff'); // the ticket is single use: no switching
+  assert.equal((await c2.get('/therapist')).status, 403);
+  const c3 = client(); await staffLogin(c3, th.email);
+  assert.equal((await c3.post('/choose-account', { account: th.id })).loc, '/therapist');
+  assert.equal((await c3.get('/therapist')).status, 200);
+  assert.equal((await c3.get('/practice')).status, 403);
 });
 
 test('wrong codes lock the code out after 5 attempts; a code cannot be reused', { skip }, async () => {

@@ -22,6 +22,7 @@ test.after(async () => {
   await q(`UPDATE core.mail_settings SET smtp_host=NULL, smtp_port=NULL, smtp_secure=false, smtp_user=NULL,
            smtp_password_enc=NULL, from_name=NULL, from_address=NULL, updated_at=NULL, updated_by=NULL WHERE id=1`);
   await q(`UPDATE core.practice_settings SET practice_name=NULL, practice_short=NULL, color_primary=NULL, updated_at=NULL, updated_by=NULL WHERE id=1`);
+  await q(`DELETE FROM clinical.clients WHERE email LIKE '%.${run}@example.test'`);
   await q(`DELETE FROM core.staff WHERE email LIKE '%.${run}@example.test'`);
   server.close(); await require('../lib/db').pool.end();
 });
@@ -39,7 +40,7 @@ function client() {
   };
   return { get: p => call('GET', p), post: (p, f) => call('POST', p, f) };
 }
-const addStaff = (n, pm, th) => q(`INSERT INTO core.staff (name,email,is_practice_manager,is_therapist) VALUES ($1,$2,$3,$4) RETURNING *`, [n, em(n), pm, th]).then(r => r[0]);
+const addStaff = async (n, pm, th) => { let first; for (const role of [th && 'therapist', pm && 'practice_manager'].filter(Boolean)) { const [r] = await q(`INSERT INTO core.staff (name,email,role) VALUES ($1,$2,$3) RETURNING *`, [n, em(n), role]); first = first || r; } return first; };
 const lastCode = to => { const m = [...mail.outbox].reverse().find(x => x.to === to && /sign-in code/.test(x.subject)); return m && m.html.match(/>(\d{6})</)[1]; };
 async function login(c, email) {
   await c.post('/staff/request-code', { email });
@@ -50,19 +51,19 @@ const form = over => ({ from_address: 'practice@example.test', from_name: 'Test 
 test('a printed code signs in when the mailbox cannot send, and works only once', { skip }, async () => {
   const s = await addStaff('owner', true, true); const c = client();
   const { code, id } = await A.issueStaffCode(s, 30 * 60 * 1000); // what scripts/signin-code.js does
-  await A.supersedeStaffCodes(s.id, id);
+  await A.supersedeStaffCodes(s.email, id);
   mail.testHooks.failNext = true;                                  // the sign-in page tries to email a code and fails
   await c.post('/staff/request-code', { email: s.email });
   assert.equal(lastCode(s.email), undefined);
   const r = await c.post('/staff/verify', { email: s.email, code });
-  assert.equal(r.status, 302); assert.equal(r.loc, '/choose-role');
+  assert.equal(r.status, 302); assert.equal(r.loc, '/choose-account');
   assert.equal((await client().post('/staff/verify', { email: s.email, code })).status, 401);
 });
 
 test('an emailed code replaces a printed one once it has been delivered', { skip }, async () => {
   const s = await addStaff('owner2', true, false);
   const { code, id } = await A.issueStaffCode(s, 30 * 60 * 1000);
-  await A.supersedeStaffCodes(s.id, id);
+  await A.supersedeStaffCodes(s.email, id);
   await client().post('/staff/request-code', { email: s.email });
   assert.equal((await client().post('/staff/verify', { email: s.email, code })).status, 401);
   assert.equal((await client().post('/staff/verify', { email: s.email, code: lastCode(s.email) })).status, 302);
@@ -129,4 +130,52 @@ test('practice name and colour are set in the app, appear on pages and emails, a
   assert.ok(home.text.includes('Calm &amp; Co &lt;b&gt;')); assert.ok(!home.text.includes('<b>')); assert.ok(home.text.includes('#224466'));
   await client().post('/staff/request-code', { email: p.email });
   assert.ok(mail.outbox.at(-1).html.includes('Calm &amp; Co')); assert.ok(mail.outbox.at(-1).html.includes('#224466'));
+});
+
+test('team: only a practice manager account can manage it; adding someone sends an invitation they can sign in from', { skip }, async () => {
+  const t = await addStaff('tteam', false, true); const tc = client(); await login(tc, t.email);
+  assert.equal((await tc.get('/practice/team')).status, 403);
+  assert.equal((await tc.post('/practice/team/add', { name: 'X', email: em('x'), role: 'practice_manager' })).status, 403);
+  const p = await addStaff('pmteam', true, false); const c = client(); await login(c, p.email);
+  assert.equal((await c.post('/practice/team/add', { name: 'New', email: 'nope', role: 'therapist' })).status, 400);
+  assert.equal((await c.post('/practice/team/add', { name: 'New', email: em('new'), role: 'owner' })).status, 400);
+  const r = await c.post('/practice/team/add', { name: 'New Therapist', email: em('new').toUpperCase(), role: 'therapist' });
+  assert.equal(r.status, 200); assert.match(r.text, /emailed an invitation/);
+  const inv = mail.outbox.at(-1);
+  assert.equal(inv.to, em('new')); assert.match(inv.html, /therapist account/); assert.match(inv.html, /\/staff"/); assert.ok(!/\d{6}/.test(inv.html.replace(/#[0-9a-f]{6}/g, '')));
+  assert.equal((await c.post('/practice/team/add', { name: 'Dup', email: em('new'), role: 'therapist' })).status, 400);
+  const nc = client(); assert.equal((await login(nc, em('new'))).loc, '/therapist');
+  // the same person can also be given a separate practice manager account
+  assert.equal((await c.post('/practice/team/add', { name: 'New Therapist', email: em('new'), role: 'practice_manager' })).status, 200);
+  assert.equal((await login(client(), em('new'))).loc, '/choose-account');
+  mail.testHooks.failNext = true;
+  const f = await c.post('/practice/team/add', { name: 'Late', email: em('late'), role: 'therapist' });
+  assert.equal(f.status, 200); assert.match(f.text, /could not be sent/);
+});
+
+test('team: suspend signs the person out, you cannot remove yourself, and removal moves clients without showing them', { skip }, async () => {
+  const p = await addStaff('pmrm', true, false); const c = client(); await login(c, p.email);
+  const a = await addStaff('leaver', false, true), b = await addStaff('stayer', false, true);
+  await q(`INSERT INTO clinical.clients (therapist_id,name,email) VALUES ($1,'Private Person',$2)`, [a.id, em('cl')]);
+  const ac = client(); await login(ac, a.email);
+  assert.equal((await ac.get('/therapist')).status, 200);
+  assert.equal((await c.post(`/practice/team/${p.id}`, { action: 'remove' })).status, 400);
+  assert.equal((await c.post(`/practice/team/${p.id}`, { action: 'suspend' })).status, 400);
+  await c.post(`/practice/team/${a.id}`, { action: 'suspend' });
+  assert.equal((await ac.get('/therapist')).status, 302); // signed out at once
+  const n0 = mail.outbox.length; await client().post('/staff/request-code', { email: a.email });
+  assert.equal(mail.outbox.length, n0); // a suspended account gets no code
+  await c.post(`/practice/team/${a.id}`, { action: 'reactivate' });
+  const page = await c.get('/practice/team');
+  assert.match(page.text, /1 client/); assert.ok(!page.text.includes('Private Person')); assert.ok(!page.text.includes(em('cl')));
+  assert.equal((await c.post(`/practice/team/${a.id}`, { action: 'remove' })).status, 400);                    // has a client: must choose who takes over
+  assert.equal((await c.post(`/practice/team/${a.id}`, { action: 'remove', reassign_to: p.id })).status, 400); // a manager account cannot take clients
+  const done = await c.post(`/practice/team/${a.id}`, { action: 'remove', reassign_to: b.id });
+  assert.equal(done.status, 200); assert.ok(!done.text.includes('Private Person'));
+  assert.equal((await q(`SELECT therapist_id FROM clinical.clients WHERE email=$1`, [em('cl')]))[0].therapist_id, b.id);
+  assert.equal((await q(`SELECT status FROM core.staff WHERE id=$1`, [a.id]))[0].status, 'removed');
+  const before = mail.outbox.length; await client().post('/staff/request-code', { email: a.email });
+  assert.equal(mail.outbox.length, before); // a removed account gets no code
+  const e = await c.post(`/practice/team/${b.id}`, { action: 'edit', name: 'Stayer Renamed', email: em('stayer2') });
+  assert.equal(e.status, 200); assert.equal((await login(client(), em('stayer2'))).loc, '/therapist');
 });

@@ -10,15 +10,17 @@ per role. Clients, sessions, journal and the enquiry pipeline come in later phas
 
 ## Access model
 
-- **Practice manager:** enquiries, bookings, sources, schedules. Never clinical content.
-- **Therapist:** the only role that sees clinical data. One person can hold both roles but acts in one at a time
-  (they choose after signing in; the choice is audited).
+- **Practice manager account:** practice details, email settings and the team. Never client records.
+- **Therapist account:** the only kind that sees clinical data. A person can have both kinds under one email
+  address, but they are separate accounts: after the emailed code they choose one, and sign out to use the other.
 - **Client:** their own record only.
 - **Staff sign in** with a 6-digit emailed code (10 minutes, 5 attempts). **Clients** use an emailed link (15 minutes,
   single use, with a confirm button so mail scanners can't use it up), and an installed phone app can complete its own
   sign-in. Sessions: 30 minutes idle, 12 hours maximum. All secrets are stored hashed. Sign-ins and role choices are logged.
-- Staff and clients are added with `scripts/create-staff.js` and `scripts/create-client.js` until the admin screens exist:
-  `docker compose exec app node scripts/create-staff.js "Name" email --therapist --practice-manager`
+- **The first practice manager** is added on the server:
+  `docker compose exec app node scripts/create-staff.js "Name" email --practice-manager` (add `--therapist` to
+  create their separate therapist account too). Everyone after that is added on the Team page, which emails them
+  an invitation. Clients are added with `scripts/create-client.js` until the client screens exist.
 - **Practice name and colour** are set in the app (Settings > Practice details).
 - **Email** is set up in the app, not in `.env`: a practice manager opens Settings > Email and enters the practice
   mailbox's outgoing (SMTP) server, port, username and password, sends a test, then saves. Everything the app sends
@@ -34,7 +36,7 @@ so it can move to another VPS by redeploying and restoring data.
 
 ## Data areas
 
-Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`, `003_mail_settings.sql`, `004_practice_settings.sql`):
+Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`, `003_mail_settings.sql`, `004_practice_settings.sql`, `005_separate_accounts.sql`):
 `core` (staff, sessions, sign-in tokens, audit log, email and practice settings),
 `engagement` (enquiries, source tracking), `clinical` (clients, sessions, journal, consent),
 `documents` (document metadata), `commerce` (reserved: bookings, vouchers, payments).

@@ -1,4 +1,4 @@
-// routes/auth.js — sign-in, role selection, sign-out, and the per-role landing shells.
+// routes/auth.js — sign-in, account choice, sign-out, settings, team, and the landing shells.
 const express = require('express');
 const { q, one } = require('../lib/db');
 const A = require('../lib/auth');
@@ -30,13 +30,13 @@ router.post('/staff/request-code', async (req, res) => {
   // Identical response whether or not the address exists, and whether or not we're throttling.
   if (!limited(`code|${req.ip}|${email}`, 5, 10 * 60 * 1000)) {
     try {
-      const staff = await one(`SELECT * FROM core.staff WHERE lower(email)=$1 AND status='active'`, [email]);
+      const [staff] = await A.accountsFor(email);
       if (staff) {
         const { code, id } = await A.issueStaffCode(staff);
         try {
           await mail.sendMail(staff.email, 'Your sign-in code', mail.staffCodeEmail(staff.name, code));
         } catch (e) { await A.voidToken(id); throw e; } // an undelivered code must not displace one that works
-        await A.supersedeStaffCodes(staff.id, id);
+        await A.supersedeStaffCodes(email, id);
         await audit(req, 'staff.code_sent', { actorType: 'staff', actorId: staff.id });
       }
     } catch (e) { console.error('[auth] code request failed:', e.message); }
@@ -44,37 +44,38 @@ router.post('/staff/request-code', async (req, res) => {
   res.send(V.staffVerify(email));
 });
 
+const enter = (req, res, staff) =>
+  startSession(req, res, { staffId: staff.id, role: staff.role }, 'staff.signed_in', { actorType: 'staff', actorId: staff.id, detail: { role: staff.role } })
+    .then(() => res.redirect(landing(staff.role)));
+
 router.post('/staff/verify', async (req, res) => {
   const email = norm(req.body.email);
   const fail = () => res.status(401).send(V.staffVerify(email, "That code didn't work or has expired."));
   if (limited(`verify|${req.ip}`, 20, 10 * 60 * 1000)) return fail();
-  const staff = await one(`SELECT * FROM core.staff WHERE lower(email)=$1 AND status='active'`, [email]);
-  if (!staff || !(await A.verifyStaffCode(staff, String(req.body.code || '').trim()))) {
-    await audit(req, 'staff.signin_failed', { actorType: 'staff', actorId: staff ? staff.id : null });
+  const accounts = await A.accountsFor(email);
+  if (!accounts.length || !(await A.verifyStaffCode(email, String(req.body.code || '').trim()))) {
+    await audit(req, 'staff.signin_failed', { actorType: 'staff', actorId: accounts[0] ? accounts[0].id : null });
     return fail();
   }
-  const roles = A.rolesOf(staff);
-  const role = roles.length === 1 ? roles[0] : null; // two roles: choose explicitly
-  await startSession(req, res, { staffId: staff.id, role }, 'staff.signed_in', { actorType: 'staff', actorId: staff.id, detail: { role } });
-  res.redirect(role ? landing(role) : '/choose-role');
+  if (accounts.length === 1) return enter(req, res, accounts[0]);
+  // Two separate accounts under this address: choose which one to enter. No session exists yet.
+  res.cookie('pick', await A.issuePick(accounts[0]), { httpOnly: true, signed: true, sameSite: 'lax', secure, maxAge: 5 * 60 * 1000 });
+  res.redirect('/choose-account');
 });
 
-router.get('/choose-role', async (req, res) => {
-  const s = await A.getSession(req);
-  if (!s || !s.staff) return res.redirect('/staff');
-  const roles = A.rolesOf(s.staff);
-  if (roles.length === 1) return res.redirect(landing(roles[0]));
-  res.send(V.chooseRole(roles));
+router.get('/choose-account', async (req, res) => {
+  const email = await A.pickEmail(req.signedCookies && req.signedCookies.pick, false);
+  if (!email) return res.redirect('/staff');
+  res.send(V.chooseAccount(await A.accountsFor(email)));
 });
 
-router.post('/choose-role', async (req, res) => {
-  const s = await A.getSession(req);
-  if (!s || !s.staff) return res.redirect('/staff');
-  const role = String(req.body.role || '');
-  if (!A.rolesOf(s.staff).includes(role)) return res.status(403).send(V.forbidden());
-  await A.setRole(s.idHash, role);
-  await audit(req, 'staff.role_selected', { actorType: 'staff', actorId: s.staff.id, detail: { role } });
-  res.redirect(landing(role));
+router.post('/choose-account', async (req, res) => {
+  const email = await A.pickEmail(req.signedCookies && req.signedCookies.pick, true);
+  res.clearCookie('pick');
+  if (!email) return res.redirect('/staff');
+  const staff = (await A.accountsFor(email)).find(a => String(a.id) === String(req.body.account));
+  if (!staff) return res.status(403).send(V.forbidden());
+  return enter(req, res, staff);
 });
 
 // ---------- clients: emailed link ----------
@@ -141,11 +142,102 @@ const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
 
 router.get('/practice', pm, async (req, res) => {
   const m = await mail.getSettings();
-  res.send(V.shell(req.session.staff.name, 'Practice manager', 'Enquiries, bookings and sources will appear here. Clinical records are not available in this role.',
-    A.rolesOf(req.session.staff).length > 1, [
-      { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
-      { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
-    ]));
+  res.send(V.shell(req.session.staff.name, 'Practice manager', 'Set up the practice and manage the team here. Client records are not available in this account.', [
+    { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
+    { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
+    { href: '/practice/team', label: 'Team (add or remove therapists and managers)' },
+  ]));
+});
+
+// ---------- team: the practice manager adds, changes and removes accounts ----------
+// Nothing here reads client records. Where a therapist has clients, only the COUNT is shown.
+const ROLES = { therapist: 'Therapist', practice_manager: 'Practice manager' };
+const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
+const cleanName = v => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 100);
+
+async function teamPage(req, res, msg, ok) {
+  const team = await q(`SELECT s.id, s.name, s.email, s.role, s.status, s.invited_at,
+      (SELECT count(*)::int FROM clinical.clients c WHERE c.therapist_id = s.id AND c.status <> 'closed') AS clients
+    FROM core.staff s WHERE s.status <> 'removed' ORDER BY s.role DESC, lower(s.name)`);
+  res.status(ok === false ? 400 : 200).send(V.team(team, req.session.staff.id, msg, ok));
+}
+
+async function sendInvite(staff) {
+  try {
+    await mail.sendMail(staff.email, `You've been added to ${brand.BRAND.practiceName}`, mail.inviteEmail(staff.name, ROLES[staff.role], `${process.env.BASE_URL}/staff`));
+    await q(`UPDATE core.staff SET invited_at=now() WHERE id=$1`, [staff.id]);
+    return true;
+  } catch (e) { console.error('[team] invite failed:', e.message); return false; }
+}
+
+router.get('/practice/team', pm, (req, res) => teamPage(req, res));
+
+router.post('/practice/team/add', pm, async (req, res) => {
+  const name = cleanName(req.body.name), email = norm(req.body.email), role = String(req.body.role || '');
+  if (!name) return teamPage(req, res, 'Enter a name.', false);
+  if (!EMAIL_RE.test(email)) return teamPage(req, res, 'Enter a valid email address.', false);
+  if (!ROLES[role]) return teamPage(req, res, 'Choose the type of account.', false);
+  const existing = await one(`SELECT id, status FROM core.staff WHERE lower(email)=$1 AND role=$2`, [email, role]);
+  if (existing && existing.status !== 'removed') return teamPage(req, res, `That address already has a ${ROLES[role].toLowerCase()} account.`, false);
+  const [staff] = existing
+    ? await q(`UPDATE core.staff SET name=$2, status='active', invited_at=NULL WHERE id=$1 RETURNING *`, [existing.id, name])
+    : await q(`INSERT INTO core.staff (name, email, role) VALUES ($1,$2,$3) RETURNING *`, [name, email, role]);
+  await audit(req, 'team.added', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'staff', subjectId: staff.id, detail: { role } });
+  const sent = await sendInvite(staff);
+  teamPage(req, res, sent ? `${name} was added and has been emailed an invitation.` : `${name} was added, but the invitation email could not be sent. Check the email settings, then use "Send invitation again".`, true);
+});
+
+router.post('/practice/team/:id', pm, async (req, res) => {
+  const me = req.session.staff, action = String(req.body.action || '');
+  const staff = await one(`SELECT * FROM core.staff WHERE id=$1 AND status <> 'removed'`, [Number(req.params.id) || 0]);
+  if (!staff) return teamPage(req, res, 'That account no longer exists.', false);
+  const log = (what, detail) => audit(req, what, { actorType: 'staff', actorId: me.id, subjectType: 'staff', subjectId: staff.id, detail });
+
+  if (action === 'invite') {
+    if (staff.status !== 'active') return teamPage(req, res, 'Reactivate the account before sending an invitation.', false);
+    const sent = await sendInvite(staff);
+    if (sent) await log('team.invited');
+    return teamPage(req, res, sent ? `Invitation sent to ${staff.name}.` : 'The invitation email could not be sent. Check the email settings.', sent);
+  }
+  if (action === 'edit') {
+    const name = cleanName(req.body.name), email = norm(req.body.email);
+    if (!name || !EMAIL_RE.test(email)) return teamPage(req, res, 'Enter a name and a valid email address.', false);
+    if (await one(`SELECT 1 FROM core.staff WHERE lower(email)=$1 AND role=$2 AND id<>$3`, [email, staff.role, staff.id])) return teamPage(req, res, `That address already has a ${ROLES[staff.role].toLowerCase()} account.`, false);
+    const emailChanged = email !== staff.email.toLowerCase();
+    await q(`UPDATE core.staff SET name=$2, email=$3 WHERE id=$1`, [staff.id, name, email]);
+    if (emailChanged) await A.endStaffSessions(staff.id); // a new address must prove itself with a fresh sign-in
+    await log('team.edited', { email_changed: emailChanged });
+    return teamPage(req, res, emailChanged && staff.id === me.id ? 'Saved. Sign in again with the new address.' : 'Saved.', true);
+  }
+  // The remaining actions change who can get in. You cannot do them to the account you are signed in with,
+  // so a practice can never be left with no working practice manager.
+  if (staff.id === me.id) return teamPage(req, res, 'You cannot suspend or remove the account you are signed in with. Ask another practice manager.', false);
+  if (action === 'reactivate') {
+    await q(`UPDATE core.staff SET status='active' WHERE id=$1`, [staff.id]);
+    await log('team.reactivated');
+    return teamPage(req, res, `${staff.name} can sign in again.`, true);
+  }
+  if (action === 'suspend') {
+    await q(`UPDATE core.staff SET status='suspended' WHERE id=$1`, [staff.id]);
+    await A.endStaffSessions(staff.id);
+    await log('team.suspended');
+    return teamPage(req, res, `${staff.name} is suspended and has been signed out. Their clients stay with them.`, true);
+  }
+  if (action === 'remove') {
+    const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [staff.id]);
+    let moved = 0;
+    if (n > 0) {
+      const to = await one(`SELECT id, name FROM core.staff WHERE id=$1 AND role='therapist' AND status='active' AND id<>$2`, [Number(req.body.reassign_to) || 0, staff.id]);
+      if (!to) return teamPage(req, res, `${staff.name} has ${n} client${n === 1 ? '' : 's'}. Choose the therapist who will take them over, then remove.`, false);
+      moved = (await q(`UPDATE clinical.clients SET therapist_id=$2 WHERE therapist_id=$1 RETURNING id`, [staff.id, to.id])).length;
+      await audit(req, 'team.clients_reassigned', { actorType: 'staff', actorId: me.id, subjectType: 'staff', subjectId: to.id, detail: { from: staff.id, count: moved } });
+    }
+    await q(`UPDATE core.staff SET status='removed' WHERE id=$1`, [staff.id]);
+    await A.endStaffSessions(staff.id);
+    await log('team.removed');
+    return teamPage(req, res, `${staff.name} was removed.${moved ? ` ${moved} client${moved === 1 ? ' was' : 's were'} moved to the therapist you chose.` : ''}`, true);
+  }
+  teamPage(req, res, 'Unknown action.', false);
 });
 
 // ---------- settings: practice name and colour ----------
@@ -156,7 +248,7 @@ router.post('/practice/settings/practice', pm, async (req, res) => {
   const { error, values } = brand.validate(req.body);
   if (error) return res.status(400).send(V.practiceSettings({ practice_name: req.body.practice_name, practice_short: req.body.practice_short, color_primary: brand.BRAND.colorPrimary }, error, false));
   await brand.save(values, req.session.staff.id);
-  await audit(req, 'practice.settings_saved', { actorType: 'staff', actorId: req.session.staff.id, detail: values });
+  await audit(req, 'practice.settings_saved', { actorType: 'staff', actorId: req.session.staff.id });
   res.send(V.practiceSettings(brandNow(), 'Saved.', true));
 });
 
@@ -189,9 +281,9 @@ router.post('/practice/settings/email', pm, async (req, res) => {
 });
 
 router.get('/therapist', A.requireRole('therapist', '/staff', V.forbidden), (req, res) =>
-  res.send(V.shell(req.session.staff.name, 'Therapist', 'Your clients, sessions and journals will appear here.', A.rolesOf(req.session.staff).length > 1)));
+  res.send(V.shell(req.session.staff.name, 'Therapist', 'Your clients, sessions and journals will appear here.')));
 
 router.get('/journal', A.requireRole('client', '/', V.forbidden), (req, res) =>
-  res.send(V.shell(req.session.client.name, 'Client', 'Your journal will appear here.', false)));
+  res.send(V.shell(req.session.client.name, 'Client', 'Your journal will appear here.')));
 
 module.exports = router;

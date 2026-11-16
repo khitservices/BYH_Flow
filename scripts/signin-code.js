@@ -10,10 +10,10 @@ const A = require('../lib/auth');
 (async () => {
   const email = String(process.argv[2] || '').trim().toLowerCase();
   if (!email) throw new Error('usage: signin-code.js email');
-  const staff = await one(`SELECT * FROM core.staff WHERE lower(email)=$1 AND status='active'`, [email]);
-  if (!staff) throw new Error('no active staff member with that email (add them with create-staff.js first)');
+  const [staff] = await A.accountsFor(email);
+  if (!staff) throw new Error('no active account with that email (add one with create-staff.js first)');
   const { code, id } = await A.issueStaffCode(staff, 30 * 60 * 1000);
-  await A.supersedeStaffCodes(staff.id, id);
+  await A.supersedeStaffCodes(email, id);
   await q(`INSERT INTO core.audit_log (actor_type, actor_id, action) VALUES ('staff',$1,'staff.code_printed')`, [staff.id]);
   console.log(`Sign-in code for ${staff.email}: ${code}`);
   console.log(`Valid for 30 minutes, once. Go to ${process.env.BASE_URL || ''}/staff, enter the email, then this code.`);

@@ -39,16 +39,46 @@ const staffVerify = (email, error) => page('Enter code', `${error ? `<p style="c
 <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="6-digit code">
 <button>Sign in</button></form><p class="muted"><a href="/staff">Start again</a></p>`);
 
-const chooseRole = roles => page('Choose role', `<p>You can act in more than one role. Which do you need now?</p>
-${roles.map(r => `<form method="post" action="/choose-role"><input type="hidden" name="role" value="${esc(r)}">
-<button>${r === 'therapist' ? 'Therapist (client records)' : 'Practice manager (enquiries, bookings)'}</button></form>`).join('')}`);
+const ROLE_LABEL = { therapist: 'Therapist account (clients and their records)', practice_manager: 'Practice manager account (practice setup and team)' };
+const chooseAccount = accounts => page('Choose account', `<p>This address has more than one account. Which do you want to use now?</p>
+${accounts.map(a => `<form method="post" action="/choose-account"><input type="hidden" name="account" value="${esc(a.id)}">
+<button>${esc(ROLE_LABEL[a.role])}</button></form>`).join('')}<p class="muted">To use the other one later, sign out and sign in again.</p>`);
 
 const forbidden = () => page('Not available', `<p>You don't have access to this area in your current role.</p><p><a href="/">Back</a></p>`);
 
-function shell(who, roleLabel, note, canSwitch, links = []) {
+function shell(who, roleLabel, note, links = []) {
   return page(roleLabel, `<p>Signed in as <strong>${esc(who)}</strong> (${esc(roleLabel)}).</p><p class="muted">${esc(note)}</p>
-${links.map(l => `<p><a href="${esc(l.href)}">${esc(l.label)}</a></p>`).join('')}
-${canSwitch ? '<p><a href="/choose-role">Switch role</a></p>' : ''}<p><a href="/logout">Sign out</a></p>`);
+${links.map(l => `<p><a href="${esc(l.href)}">${esc(l.label)}</a></p>`).join('')}<p><a href="/logout">Sign out</a></p>`);
+}
+
+// Team page (practice manager). Shows accounts and, for therapists, only HOW MANY clients they have.
+function team(rows, myId, msg, ok) {
+  const short = { therapist: 'Therapist', practice_manager: 'Practice manager' };
+  const others = id => rows.filter(r => r.role === 'therapist' && r.status === 'active' && r.id !== id);
+  const card = r => `<section style="border-top:1px solid #ddd;padding:14px 0" aria-label="${esc(r.name)}">
+<p style="margin:0"><strong>${esc(r.name)}</strong>${r.id === myId ? ' (you)' : ''}<br><span class="muted">${esc(short[r.role])} · ${esc(r.email)} · ${r.status === 'active' ? (r.invited_at ? 'Active' : 'Active, not yet invited') : 'Suspended'}${r.role === 'therapist' ? ` · ${r.clients} client${r.clients === 1 ? '' : 's'}` : ''}</span></p>
+<details><summary>Change</summary>
+<form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="edit">
+<label for="n${r.id}">Name</label><input id="n${r.id}" name="name" required value="${esc(r.name)}">
+<label for="e${r.id}">Email</label><input id="e${r.id}" name="email" type="email" required value="${esc(r.email)}">
+<button class="alt">Save changes</button></form>
+${r.status === 'active' ? `<form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="invite"><button class="alt">Send invitation again</button></form>` : ''}
+${r.id === myId ? '' : `<form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="${r.status === 'active' ? 'suspend' : 'reactivate'}"><button class="alt">${r.status === 'active' ? 'Suspend (stops sign-in, keeps everything)' : 'Reactivate'}</button></form>
+<form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="remove">
+${r.clients > 0 ? `<label for="t${r.id}">Move their ${r.clients} client${r.clients === 1 ? '' : 's'} to</label><select id="t${r.id}" name="reassign_to" required style="font-size:16px;padding:11px;width:100%;margin:6px 0"><option value="">Choose a therapist</option>${others(r.id).map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select>` : ''}
+<button style="background:#b00020">Remove ${esc(r.name)}</button></form>`}
+</details></section>`;
+  return page('Team', `<p><strong>Team</strong></p>
+<p class="muted">Each account is either a therapist or a practice manager. One person can have both under the same email address; they are separate accounts.</p>
+${msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : ''}
+${rows.map(card).join('')}
+<section style="border-top:1px solid #ddd;padding-top:14px"><p><strong>Add someone</strong></p>
+<form method="post" action="/practice/team/add">
+<label for="an">Name</label><input id="an" name="name" required>
+<label for="ae">Email</label><input id="ae" name="email" type="email" required>
+<label for="ar">Type of account</label><select id="ar" name="role" style="font-size:16px;padding:11px;width:100%;margin:6px 0"><option value="therapist">Therapist</option><option value="practice_manager">Practice manager</option></select>
+<button>Add and send invitation</button></form></section>
+<p><a href="/practice">Back</a></p>`);
 }
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
@@ -81,4 +111,4 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseRole, forbidden, shell, mailSettings };
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, mailSettings };

@@ -20,8 +20,8 @@
 - **Roles:** practice manager, therapist, client. (BYH's current `admin` is a platform operator who
   never sees client data; practice manager is new.)
 
-- **Access (2026-11-13):** practice managers never see clinical data; only therapists do. One person may hold both
-  roles and chooses which to act in. Staff sign in with an emailed passcode; clients with an emailed link.
+- **Access (2026-11-13):** practice managers never see clinical data; only therapists do. (How one person holds
+  both is in "Accounts and onboarding" below.) Staff sign in with an emailed passcode; clients with an emailed link.
   (The earlier plan to send login emails from `notifications@khitservices.co.uk` is superseded by the mail
   decisions below.)
 - **Phase 2 split:** 2a identity, access and in-app mail settings; 2b clinical core (clients, programmes/sessions,
@@ -70,6 +70,23 @@
   on purpose (a database copy alone must not be enough to read documents or the mailbox password).
 - **Practice name and colour are set in the app** (Settings > Practice details), with the mailbox (Settings > Email).
 - New practice: run the script, start the stack, add the owner, print a sign-in code, then set details and email in Settings.
+
+## Accounts and onboarding (2026-11-16)
+
+- **A practice manager account and a therapist account are separate accounts.** One person may have both under
+  the same email address: one emailed code, then they choose which account to enter, and sign out to use the
+  other. No switching inside a session. (Replaces the earlier "one account, choose a role" model.)
+- **Onboarding order.** First use is the practice manager account: set name and colour, set up email, add the
+  team. Each person added gets an invitation email (no password; they sign in with an emailed code) and arrives
+  in a clean therapist area. A therapist creates their clients, and each client then gets a sign-in to the client
+  area (2b). Every enquiry and booking belongs to a specific therapist (phase 3).
+- **The practice manager's part is small:** practice details, email, and adding, changing, suspending and removing
+  accounts on the Team page. No client records, ever; where a therapist has clients the manager sees only a count.
+- **Guards.** A manager cannot suspend or remove the account they are signed in with, so a practice always has a
+  working manager. Suspending or removing someone signs them out at once. Removing a therapist who has clients
+  requires choosing the therapist who takes them over; the move is audited and shows no client details.
+- **Proposed, not yet confirmed:** the manager sees enquiry totals only (by source and stage, no names); the public
+  enquiry form has a link per therapist; the mock-up's manager screen (enquiry list, follow-ups) is out of date.
 
 ## Phases
 
