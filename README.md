@@ -36,7 +36,7 @@ so it can move to another VPS by redeploying and restoring data.
 
 ## Data areas
 
-Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`, `003_mail_settings.sql`, `004_practice_settings.sql`, `005_separate_accounts.sql`):
+Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`, `003_mail_settings.sql`, `004_practice_settings.sql`, `005_separate_accounts.sql` and later):
 `core` (staff, sessions, sign-in tokens, audit log, email and practice settings),
 `engagement` (enquiries, source tracking), `clinical` (clients, sessions, journal, consent),
 `documents` (document metadata), `commerce` (reserved: bookings, vouchers, payments).

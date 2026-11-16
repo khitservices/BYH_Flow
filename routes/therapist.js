@@ -9,6 +9,8 @@ const mail = require('../lib/mail');
 const brand = require('../lib/brand');
 const { audit } = require('../lib/audit');
 const V = require('../views/pages');
+const T = require('../lib/time');
+const { book } = require('./sessions');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
@@ -20,22 +22,30 @@ const norm = e => String(e || '').trim().toLowerCase().slice(0, 254);
 const length = (v, fallback) => (LENGTHS.includes(Number(v)) ? Number(v) : fallback);
 const dow = v => (Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 6 ? Number(v) : 3);
 
-// Which session the client is on. Booked sessions are added to this count when booking is built.
-const position = c => ({ on: Math.min(c.sessions_before_app + 1, c.programme_sessions), of: c.programme_sessions });
+// Which session the client is on: sessions had before joining, plus booked sessions already in the past,
+// plus one. A missed week does not move it on; only sessions delivered do. Never more than the programme length.
+const position = (c, held = 0) => ({ on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions });
+const heldCount = async id => (await one(`SELECT count(*)::int n FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at <= now()`, [id])).n;
 
 // "AND therapist_id" is the access rule: someone else's client is simply not found.
 const own = (req) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(req.params.id) || 0, req.session.staff.id]);
 
 router.get('/therapist', th, async (req, res) => {
-  const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [req.session.staff.id]);
-  res.send(V.shell(req.session.staff.name, 'Therapist', 'Booking, schedule and journals will appear here as they are built.', [
-    { href: '/therapist/clients', label: `Clients (${n})` },
-  ]));
+  const me = req.session.staff;
+  const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [me.id]);
+  const today = await q(`SELECT a.starts_at, c.name FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
+    WHERE c.therapist_id=$1 AND a.status='booked' AND a.starts_at >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2
+      AND a.starts_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY a.starts_at`, [me.id, T.ZONE]);
+  res.send(V.therapistHome(me.name, n, today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name }))));
 });
 
 router.get('/therapist/clients', th, async (req, res) => {
-  const rows = await q(`SELECT * FROM clinical.clients WHERE therapist_id=$1 ORDER BY (status='closed'), lower(name)`, [req.session.staff.id]);
-  res.send(V.clients(rows.map(c => ({ ...c, pos: position(c) }))));
+  const rows = await q(`SELECT c.*,
+      (SELECT count(*)::int FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at <= now()) AS held,
+      (SELECT min(a.starts_at) FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at > now()) AS next_at,
+      EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.change_requested_at IS NOT NULL) AS wants_change
+    FROM clinical.clients c WHERE c.therapist_id=$1 ORDER BY (c.status='closed'), lower(c.name)`, [req.session.staff.id]);
+  res.send(V.clients(rows.map(c => ({ ...c, pos: position(c, c.held), next: c.next_at ? T.when(c.next_at) : null }))));
 });
 
 async function sendInvite(client, therapist) {
@@ -88,6 +98,8 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   if (f.under16) await audit(req, 'client.consent_attested', who);
   const sent = await sendInvite(client, me);
   if (sent) await audit(req, 'client.invited', who);
+  // Optional first session, booked in the same step (as in the BYH app).
+  if (b.first_date) await book(req, client, b.first_date, b.first_time || '14:00');
   res.redirect(`/therapist/client/${client.id}?msg=${sent ? 'added' : 'added_nomail'}`);
 });
 
@@ -109,7 +121,8 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   await audit(req, 'client.viewed', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'client', subjectId: c.id });
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c), freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS }, m && m[0], m ? m[1] : undefined));
+  const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {

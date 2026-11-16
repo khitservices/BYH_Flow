@@ -106,12 +106,20 @@
 - **Order:** therapist section and practice management first, using the BYH and ITC apps as the starting point;
   then the client area, which is close to a lift and shift from BYH.
   1. Client record (done): programme in sessions, sessions had before joining, under-16 consent, reminder settings.
-  2. Booking and schedule. 3. Therapist account page. 4. Practice management (move clients, statistics, clean-up).
+  2. Booking and schedule (done). 3. Therapist account page. 4. Practice management (move clients, statistics, clean-up).
   5. Enquiries and documents (BYH enquiries plus the ITC pipeline). 6. Client area. 7. Reminders and daily digest.
+- **Client area addition (step 6):** alongside the journal entry, the client can record a score from 1 to 10 for
+  how they feel. Open: whether it is optional on each entry, and whether the therapist sees the scores as a trend
+  (BYH lets the therapist see only how often a client writes, never what they wrote).
 - **No Graph in this phase; revisit later.** BYH created Microsoft calendar meetings for sessions and had "send as"
   and calendar sync. Not carried over. Instead: appointment emails carry a calendar file, the therapist gets a
   private calendar feed to subscribe to, and changes send an updated file. Lost for now: clients accepting or
   declining from their calendar, and instant updates in the therapist's calendar.
+- **Booking details.** A session is 60 minutes. Dates and times are entered and shown in UK time (fixed for now;
+  becomes a practice setting when needed). A date in the past records a delivered session and sends no email.
+  Appointment emails give the date and time only. In the therapist's own calendar a session shows as the client's
+  first name and initial. The private calendar link is shown once and only its hash is stored. Cancelled sessions
+  are kept on record; "remove" is for mistakes.
 - **Under-16 consent follows BYH:** given in person and attested by the therapist when adding the client; the record
   cannot be created without it; the young person signs in with their own email; nothing is emailed to the guardian.
   (An earlier idea in this project of a consent link to the guardian is not built.)

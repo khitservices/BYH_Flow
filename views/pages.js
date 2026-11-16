@@ -1,6 +1,7 @@
 // views/pages.js — minimal server-rendered pages. Everything user-supplied goes through esc().
 const { BRAND } = require('../lib/brand');
 const { esc } = require('../lib/mail');
+const T = require('../lib/time');
 
 function page(title, body) {
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
@@ -93,7 +94,7 @@ const day = d => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', 
 
 function clients(rows) {
   const row = r => `<p style="border-top:1px solid #ddd;padding:12px 0;margin:0"><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a><br>
-<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : ` · session ${r.pos.on} of ${r.pos.of}`}${r.under16 ? ' · under 16' : ''}</span></p>`;
+<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : ` · session ${r.pos.on} of ${r.pos.of}`}${r.under16 ? ' · under 16' : ''}${r.next ? `<br>Next: ${esc(r.next)}` : ''}${r.wants_change ? '<br><strong style="color:#8a4a00">Has asked to change a session</strong>' : ''}</span></p>`;
   return page('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
 ${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}
 <form method="get" action="/therapist/clients/add" style="border-top:1px solid #ddd;padding-top:12px"><button>Add a client</button></form>
@@ -110,6 +111,8 @@ function clientAdd(f, msg) {
 <label for="sessions">Programme length</label><select id="sessions" name="sessions" ${sel}>${lengthOpts(f.sessions || 8)}</select>
 <label for="sba">Sessions already had before joining (0 for a new client)</label><input id="sba" name="sessions_before_app" inputmode="numeric" value="${esc(f.sessions_before_app || 0)}">
 <label for="rd">Weekly journal reminder day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(f.reminder_dow ?? 3)}</select>
+<label for="fd">First session date (optional)</label><input id="fd" name="first_date" type="date">
+<label for="ft">First session time</label><input id="ft" name="first_time" type="time" value="14:00">
 <fieldset style="border:1px solid #ddd;border-radius:6px;margin:16px 0 8px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Under 16</legend>
 <label class="check"><input type="checkbox" name="under16" ${f.under16 ? 'checked' : ''}> This client is under 16</label>
 <p class="muted" style="margin:8px 0 0">If so, fill in the rest of this box. Consent is given to you in person; you record it here.</p>
@@ -129,6 +132,7 @@ function clientRecord(c, msg, ok) {
   return page(c.name, `<p><strong>${esc(c.name)}</strong>${c.under16 ? ' <span class="muted">(under 16)</span>' : ''}<br>
 <span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}` : ` · session ${c.pos.on} of ${c.pos.of}`}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
 ${note(msg, ok)}
+${sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
 ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? ` · ${esc(c.phone)}` : ''}<br>${c.invited_at ? `Invited ${day(c.invited_at)}` : 'Not yet invited'}</p>
 <details><summary>Change details</summary>${post('edit', `<label for="name">Name</label><input id="name" name="name" required value="${esc(c.name)}">
 <label for="email">Email</label><input id="email" name="email" type="email" required value="${esc(c.email)}">
@@ -146,6 +150,65 @@ ${sec('Record', closed
       + post('close', '<button style="background:#b00020">Close record (stops sign-in)</button>'))}
 <p><a href="/therapist/clients">Back to clients</a></p>`);
 }
+
+// ---- therapist account: home, booking and schedule ----
+function therapistHome(who, clientCount, today) {
+  return page('Therapist', `<p>Signed in as <strong>${esc(who)}</strong> (Therapist).</p>
+<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Today</strong></p>
+${today.length ? today.map(a => `<p style="margin:4px 0">${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted" style="margin:0">No sessions today.</p>'}</section>
+<p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p>
+<p><a href="/logout">Sign out</a></p>`);
+}
+
+const whenFields = (id, at) => `<label for="d${id}">Date</label><input id="d${id}" name="date" type="date" required value="${at ? T.inputDate(at) : ''}">
+<label for="t${id}">Time</label><input id="t${id}" name="time" type="time" required value="${at ? T.timeShort(at) : '14:00'}">`;
+const sessionActions = (a, ret) => `<details><summary>Change</summary>
+<form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="reschedule"><input type="hidden" name="return" value="${ret}">
+${whenFields(a.id, a.starts_at)}<button class="alt">Move to this date and time</button></form>
+${a.status === 'booked' ? `<form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="return" value="${ret}"><button class="alt">Cancel session (kept on record)</button></form>` : ''}
+<form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="remove"><input type="hidden" name="return" value="${ret}"><button style="background:#b00020">Remove (entered by mistake)</button></form>
+<p style="margin:6px 0 0"><a href="/therapist/session/${a.id}/calendar.ics">Download for my calendar</a></p></details>`;
+const changeAsk = a => (a.change_requested_at ? `<br><strong style="color:#8a4a00">Client asked to ${a.change_request_kind === 'cancel' ? 'cancel' : 'move'} this${a.change_request_reason ? `: ${esc(a.change_request_reason)}` : ''}</strong>` : '');
+
+function clientSessions(c, appts, msg, ok) {
+  const now = Date.now();
+  const line = a => `<div style="border-top:1px solid #eee;padding:10px 0"><p style="margin:0">${esc(T.when(a.starts_at))}${a.status === 'cancelled' ? ' <span class="muted">(cancelled)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'client')}</div>`;
+  const up = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) > now), past = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) <= now).reverse(), gone = appts.filter(a => a.status === 'cancelled').reverse();
+  const block = (title, list, empty) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${list.length ? list.map(line).join('') : `<p class="muted" style="margin:0">${empty}</p>`}</section>`;
+  return page(`Sessions: ${c.name}`, `<p><strong>Sessions: ${esc(c.name)}</strong></p>${note(msg, ok)}
+${block('Coming up', up, 'Nothing booked.')}
+${c.status === 'active' ? `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Book a session</strong></p>
+<form method="post" action="/therapist/client/${c.id}/sessions">${whenFields('new')}<button>Book</button></form>
+<p class="muted">A date in the past records a session that has already happened and sends no email.</p></section>` : '<p class="muted">This record is not active, so new sessions cannot be booked.</p>'}
+${block('Past', past, 'None yet.')}${gone.length ? block('Cancelled', gone, '') : ''}
+<p><a href="/therapist/client/${c.id}">Back to ${esc(c.name)}</a></p>`);
+}
+
+function book(active, msg, ok) {
+  return page('Book a session', `<p><strong>Book a session</strong></p>${note(msg, ok)}
+${active.length ? `<form method="post" action="/therapist/book"><label for="cl">Client</label><select id="cl" name="client_id" required ${sel}><option value="">Choose a client</option>${opts(active.map(c => [c.id, c.name]))}</select>
+${whenFields('b')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}
+<p><a href="/therapist">Back</a></p>`);
+}
+
+function schedule(rows, feed, msg, ok) {
+  let lastDay = '';
+  const line = a => { const d = T.dateLong(a.starts_at); const head = d !== lastDay ? `<p style="margin:14px 0 4px"><strong>${esc(d)}</strong></p>` : ''; lastDay = d;
+    return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule')}</div>`; };
+  return page('Schedule', `<p><strong>Schedule</strong> <span class="muted">next 60 days</span></p>${note(msg, ok)}
+${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}
+<section style="border-top:1px solid #ddd;padding:12px 0;margin-top:14px"><p style="margin:0 0 6px"><strong>See this in your own calendar</strong></p>
+<p class="muted" style="margin:0">A private link you add once to Outlook, Apple or Google Calendar as a subscribed calendar. It shows session times with the client's first name and initial only. Calendar apps refresh it every few hours.</p>
+<form method="post" action="/therapist/schedule/feed"><button class="alt">${feed.hasFeed ? 'Replace my calendar link (the old one stops working)' : 'Create my calendar link'}</button></form>
+${feed.hasFeed ? '<form method="post" action="/therapist/schedule/feed"><input type="hidden" name="action" value="off"><button class="alt">Turn the calendar link off</button></form>' : ''}</section>
+<p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist">Back</a></p>`);
+}
+
+const feedLink = url => page('Your calendar link', `<p><strong>Your calendar link</strong></p>
+<p>Copy this now. It is shown only once; if you lose it, create a new one from the Schedule page.</p>
+<label for="fl">Link</label><input id="fl" readonly value="${esc(url)}" onfocus="this.select()">
+<p class="muted">In your calendar app choose "add calendar from the internet" or "subscribe", and paste it. Treat it like a password: anyone with the link can see your session times.</p>
+<p><a href="/therapist/schedule">Back to schedule</a></p>`);
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
 function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
@@ -177,4 +240,4 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, mailSettings };
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, mailSettings };
