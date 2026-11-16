@@ -19,17 +19,23 @@ per role. Clients, sessions, journal and the enquiry pipeline come in later phas
   sign-in. Sessions: 30 minutes idle, 12 hours maximum. All secrets are stored hashed. Sign-ins and role choices are logged.
 - Staff and clients are added with `scripts/create-staff.js` and `scripts/create-client.js` until the admin screens exist:
   `docker compose exec app node scripts/create-staff.js "Name" email --therapist --practice-manager`
+- **Practice name and colour** are set in the app (Settings > Practice details).
+- **Email** is set up in the app, not in `.env`: a practice manager opens Settings > Email and enters the practice
+  mailbox's outgoing (SMTP) server, port, username and password, sends a test, then saves. Everything the app sends
+  goes out from that mailbox. The password is stored sealed with `SECRETS_KEY` and is never shown again.
+- **First sign-in, and the way back in if email stops working:**
+  `docker compose exec app node scripts/signin-code.js email` prints a one-time code (30 minutes) on the server.
 
 ## Stack
 
 Node 22 / Express, Postgres 18, encrypted document storage on a Docker volume, nginx in front.
-Everything runs as one isolated Docker Compose stack, configured only by environment variables,
+Everything runs as one isolated Docker Compose stack, with secrets in one generated `.env` file and everything else set in the app,
 so it can move to another VPS by redeploying and restoring data.
 
 ## Data areas
 
-Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`):
-`core` (staff, sessions, sign-in tokens, audit log),
+Postgres schemas, linked only by internal ID (`migrations/001_schemas.sql`, `002_identity.sql`, `003_mail_settings.sql`, `004_practice_settings.sql`):
+`core` (staff, sessions, sign-in tokens, audit log, email and practice settings),
 `engagement` (enquiries, source tracking), `clinical` (clients, sessions, journal, consent),
 `documents` (document metadata), `commerce` (reserved: bookings, vouchers, payments).
 
@@ -39,11 +45,10 @@ Target: `practice.betteryouhypnotherapy.co.uk`, app on `127.0.0.1:8100`.
 
 1. **DNS (Fasthosts, BYH domain):** add an `A` record `practice` -> VPS2's IP. Use a low TTL.
 2. **Code:** `git clone` this repo to `/opt/byh-flow` and check out the branch.
-3. **Secrets:** `cp .env.example .env && chmod 600 .env`, then fill in `SESSION_SECRET` (`openssl rand -hex 32`),
-   the Graph values and `GRAPH_SENDER`, and:
-   - `POSTGRES_PASSWORD`: `openssl rand -hex 24` (hex only: it goes into a connection URL, so avoid base64)
-   - `FILE_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Store a copy away from this server and
-     its backups.** Lose it and stored documents are unreadable.
+3. **Secrets:** `./scripts/init-env.sh https://practice.betteryouhypnotherapy.co.uk`. It creates `.env` (or fills in
+   whatever an existing one is missing), generates every secret, changes nothing already set and prints no secret.
+   **Copy the `FILE_ENCRYPTION_KEY` line somewhere away from this server and its backups.** Lose it and stored
+   documents are unreadable. Nothing else goes in `.env`: the practice name, colour and mailbox are set in the app.
 4. **Start:** `docker compose up -d --build`, then `curl -s localhost:8100/healthz` -> `{"status":"ok"}`.
 5. **nginx:** copy `deploy/nginx/*.conf` to `/etc/nginx/sites-available/`, symlink into
    `sites-enabled/`, `nginx -t && systemctl reload nginx`, then

@@ -21,10 +21,55 @@
   never sees client data; practice manager is new.)
 
 - **Access (2026-11-13):** practice managers never see clinical data; only therapists do. One person may hold both
-  roles and chooses which to act in. Staff sign in with an emailed passcode; clients with an emailed link. Login emails
-  send from `notifications@khitservices.co.uk` (existing Graph registration) while in test.
-- **Phase 2 split:** 2a identity and access; 2b clinical core (clients, programmes/sessions, calendar, journal, files);
-  2c reminders (weekly journal, appointment reminders, daily digest).
+  roles and chooses which to act in. Staff sign in with an emailed passcode; clients with an emailed link.
+  (The earlier plan to send login emails from `notifications@khitservices.co.uk` is superseded by the mail
+  decisions below.)
+- **Phase 2 split:** 2a identity, access and in-app mail settings; 2b clinical core (clients, programmes/sessions,
+  calendar, journal, files); 2c reminders (weekly journal, appointment reminders, daily digest).
+
+## Mail (2026-11-14)
+
+- **One channel for everything.** Staff login codes, client links, appointment reminders, journal nudges, enquiry
+  follow-ups, and consent and agreement requests all send through the practice's own configured mailbox. No
+  KHIT notifications address and no mail secrets in `.env`.
+- **Configured in the app at setup, not in `.env`.** Modelled on SMART's settings page (DB-backed, password
+  sealed with a key held in the server environment, read fresh on every send, send-test-email button that
+  tests unsaved values). The secrets key is separate from the document key.
+- **Plain SMTP only.** One settings form: server, port, username, password, send-from address and name. No
+  Microsoft Graph and no provider-specific code (decided 2026-11-14; an earlier note here proposed a Graph
+  provider and is withdrawn). The connection must be encrypted (TLS from the start, or STARTTLS) or the app
+  will not send. A practice whose mailbox provider does not allow password SMTP uses a mailbox or sending
+  service that does.
+- **Sole therapist:** one mailbox, everything sends from it.
+- **Group practice:** the practice manager configures the provider and the practice email domain once. A therapist
+  who signs in with an address on that domain gets it as their default sender; client emails send from the
+  client's assigned therapist. Sender addresses are restricted to the configured domain. A therapist off the
+  domain (or whose mailbox has gone) falls back to a practice default address. Per-therapist sending depends on
+  the SMTP host allowing one login to send as other addresses on the domain; where it does not, the practice
+  sends from one shared address. Not built yet: 2a has the single mailbox only.
+- **Content rule.** No clinical detail in any email: a link and minimum wording only. Consent and agreement
+  requests are links to the signing page, never attachments; no open-tracking pixels.
+- **Every send is recorded** in an outbox (type, recipient, sending mailbox, form and version, status, retries,
+  last error), never the link token. Practice managers see a not-delivered list. Login emails send
+  immediately; other mail is queued with retries. Consent links last days and are single-use with a signing
+  step that confirms identity. Under-16 consent goes to a parent or guardian with no account.
+- **Calendar file on appointment emails:** included (provider-neutral).
+- **First run and recovery.** `scripts/signin-code.js` prints a one-time sign-in code on the server (30 minutes,
+  single use, audited). The owner signs in with it, then sets up and tests the mailbox in Settings. The same
+  command is the way back in if a settings change stops codes arriving. An emailed code only replaces an
+  earlier code once it has actually been sent.
+- **Test case.** `katrina@betteryouhypnotherapy.co.uk`, a standard IMAP/SMTP mailbox (moved off Microsoft 365
+  on 2026-11-16), is the sole-therapist test mailbox. Its password is entered in Settings, never in chat or `.env`.
+- **Built in 2a:** settings page, sealed password (`SECRETS_KEY`), test email, printed sign-in code. **Still to
+  build:** outbox with retries and the not-delivered list, group-practice senders, consent send records.
+
+## Setup (2026-11-16)
+
+- **`.env` holds secrets and the address only**, and nobody edits it by hand: `scripts/init-env.sh` creates it and
+  generates the database password, session secret, secrets key and document key. The keys stay out of the database
+  on purpose (a database copy alone must not be enough to read documents or the mailbox password).
+- **Practice name and colour are set in the app** (Settings > Practice details), with the mailbox (Settings > Email).
+- New practice: run the script, start the stack, add the owner, print a sign-in code, then set details and email in Settings.
 
 ## Phases
 
@@ -50,6 +95,19 @@
   bulk discounts, offers, gift vouchers as configurable rules; one practice calendar (Microsoft 365
   via Graph, with availability checks and short holds); payments via the provider's hosted checkout so
   card data never touches this app. Open: voucher liability/VAT (accountant), refunds on blocks.
+
+- **Calendar provider.** The same provider question applies to calendars (Google, Outlook or none); touches 2b and
+  online booking. Not decided.
+- **"Connect Microsoft / Connect Google" sign-in** as an alternative to app registrations and app passwords for
+  sole therapists. Needs a vendor-owned app registration and, for Google, app verification. Not decided.
+
+## Enquiries (2026-11-14, from the mock-up)
+
+- Two ways in, one queue: phone capture by the therapist (name, how heard, phone and email all optional except
+  how heard) and a public self-service form (phone or email required). Each enquiry records which route it came by.
+- New enquiries and contacts lead both staff landing screens, with a single "+ New enquiry" button.
+- Open: whether the public form asks what the person wants help with (health information, so therapist-only if
+  asked; default is that it does not). Open: whether phone capture sits behind the therapist's sign-in.
 
 ## Open items before real data
 

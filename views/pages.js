@@ -7,8 +7,10 @@ function page(title, body) {
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
 <style>
 body{font-family:system-ui,Arial,sans-serif;background:#f6f8f8;color:#222;margin:0}
-main{max-width:420px;margin:8vh auto;padding:28px;background:#fff;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.08)}
+main{max-width:440px;margin:8vh auto;padding:28px;background:#fff;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.08)}
 h1{font-size:20px;color:${BRAND.colorPrimary};margin:0 0 16px}
+label{display:block;font-size:14px;font-weight:600;margin-top:12px}label.check{font-weight:400;display:flex;gap:8px;align-items:center}label.check input{width:auto;margin:0}
+button.alt{background:#fff;color:${BRAND.colorPrimary};border:1px solid ${BRAND.colorPrimary}}
 input,button{font-size:16px;padding:11px;width:100%;box-sizing:border-box;margin:6px 0;border-radius:6px}
 input{border:1px solid #bbb} button{border:0;background:${BRAND.colorPrimary};color:#fff;cursor:pointer}
 a{color:${BRAND.colorPrimary}} .muted{color:#666;font-size:14px} form.inline{display:inline}
@@ -43,9 +45,40 @@ ${roles.map(r => `<form method="post" action="/choose-role"><input type="hidden"
 
 const forbidden = () => page('Not available', `<p>You don't have access to this area in your current role.</p><p><a href="/">Back</a></p>`);
 
-function shell(who, roleLabel, note, canSwitch) {
+function shell(who, roleLabel, note, canSwitch, links = []) {
   return page(roleLabel, `<p>Signed in as <strong>${esc(who)}</strong> (${esc(roleLabel)}).</p><p class="muted">${esc(note)}</p>
+${links.map(l => `<p><a href="${esc(l.href)}">${esc(l.label)}</a></p>`).join('')}
 ${canSwitch ? '<p><a href="/choose-role">Switch role</a></p>' : ''}<p><a href="/logout">Sign out</a></p>`);
 }
 
-module.exports = { clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseRole, forbidden, shell };
+// s: settings to show (never a password). msg/ok: result of the last save or test.
+function mailSettings(s, myEmail, msg, ok) {
+  return page('Email settings', `<p><strong>Email settings</strong></p>
+<p class="muted">Everything the app sends (sign-in codes and links, and later reminders and consent requests) goes out from this mailbox. Use the outgoing (SMTP) details from your email provider.</p>
+${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
+${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on the server, so a password cannot be saved yet.</p>'}
+<form method="post" action="/practice/settings/email" autocomplete="off">
+<label for="from_address">Send from (email address)</label><input id="from_address" name="from_address" type="email" required value="${esc(s.from_address)}">
+<label for="from_name">Sender name shown to recipients</label><input id="from_name" name="from_name" value="${esc(s.from_name)}">
+<label for="smtp_host">Outgoing (SMTP) server</label><input id="smtp_host" name="smtp_host" required placeholder="smtp.example.com" value="${esc(s.smtp_host)}">
+<label for="smtp_port">Port</label><input id="smtp_port" name="smtp_port" inputmode="numeric" required value="${esc(s.smtp_port)}">
+<label class="check"><input type="checkbox" name="smtp_secure" ${s.smtp_secure ? 'checked' : ''}> Use SSL/TLS from the start (usually port 465). Leave off for port 587.</label>
+<label for="smtp_user">Username (leave blank to use the address above)</label><input id="smtp_user" name="smtp_user" value="${esc(s.smtp_user)}">
+<label for="smtp_password">Password</label><input id="smtp_password" name="smtp_password" type="password" autocomplete="new-password" placeholder="${s.password_set ? 'Saved. Leave blank to keep it' : 'Not set'}">
+<button name="action" value="test" class="alt">Send a test email to ${esc(myEmail)}</button>
+<button name="action" value="save">Save</button></form>
+<p><a href="/practice">Back</a></p>`);
+}
+
+function practiceSettings(s, msg, ok) {
+  return page('Practice details', `<p><strong>Practice details</strong></p>
+<p class="muted">The name and colour appear on every page and in every email the app sends.</p>
+${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
+<form method="post" action="/practice/settings/practice">
+<label for="practice_name">Practice name</label><input id="practice_name" name="practice_name" required maxlength="80" value="${esc(s.practice_name)}">
+<label for="practice_short">Short name (optional, for small spaces)</label><input id="practice_short" name="practice_short" maxlength="30" value="${esc(s.practice_short)}">
+<label for="color_primary">Colour</label><input id="color_primary" name="color_primary" type="color" style="height:48px;padding:4px" value="${esc(s.color_primary)}">
+<button>Save</button></form><p><a href="/practice">Back</a></p>`);
+}
+
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseRole, forbidden, shell, mailSettings };

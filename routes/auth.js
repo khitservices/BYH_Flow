@@ -6,6 +6,7 @@ const mail = require('../lib/mail');
 const { audit } = require('../lib/audit');
 const { limited } = require('../lib/ratelimit');
 const V = require('../views/pages');
+const brand = require('../lib/brand');
 
 const router = express.Router();
 const secure = (process.env.BASE_URL || '').startsWith('https');
@@ -31,8 +32,11 @@ router.post('/staff/request-code', async (req, res) => {
     try {
       const staff = await one(`SELECT * FROM core.staff WHERE lower(email)=$1 AND status='active'`, [email]);
       if (staff) {
-        const code = await A.issueStaffCode(staff);
-        await mail.sendMail(staff.email, 'Your sign-in code', mail.staffCodeEmail(staff.name, code));
+        const { code, id } = await A.issueStaffCode(staff);
+        try {
+          await mail.sendMail(staff.email, 'Your sign-in code', mail.staffCodeEmail(staff.name, code));
+        } catch (e) { await A.voidToken(id); throw e; } // an undelivered code must not displace one that works
+        await A.supersedeStaffCodes(staff.id, id);
         await audit(req, 'staff.code_sent', { actorType: 'staff', actorId: staff.id });
       }
     } catch (e) { console.error('[auth] code request failed:', e.message); }
@@ -133,8 +137,56 @@ router.get('/logout', async (req, res) => {
 });
 
 // ---------- landing shells (real screens arrive in later phases) ----------
-router.get('/practice', A.requireRole('practice_manager', '/staff', V.forbidden), (req, res) =>
-  res.send(V.shell(req.session.staff.name, 'Practice manager', 'Enquiries, bookings and sources will appear here. Clinical records are not available in this role.', A.rolesOf(req.session.staff).length > 1)));
+const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
+
+router.get('/practice', pm, async (req, res) => {
+  const m = await mail.getSettings();
+  res.send(V.shell(req.session.staff.name, 'Practice manager', 'Enquiries, bookings and sources will appear here. Clinical records are not available in this role.',
+    A.rolesOf(req.session.staff).length > 1, [
+      { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
+      { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
+    ]));
+});
+
+// ---------- settings: practice name and colour ----------
+const brandNow = () => ({ practice_name: brand.BRAND.practiceName, practice_short: brand.BRAND.practiceShort, color_primary: brand.BRAND.colorPrimary });
+router.get('/practice/settings/practice', pm, (_req, res) => res.send(V.practiceSettings(brandNow())));
+
+router.post('/practice/settings/practice', pm, async (req, res) => {
+  const { error, values } = brand.validate(req.body);
+  if (error) return res.status(400).send(V.practiceSettings({ practice_name: req.body.practice_name, practice_short: req.body.practice_short, color_primary: brand.BRAND.colorPrimary }, error, false));
+  await brand.save(values, req.session.staff.id);
+  await audit(req, 'practice.settings_saved', { actorType: 'staff', actorId: req.session.staff.id, detail: values });
+  res.send(V.practiceSettings(brandNow(), 'Saved.', true));
+});
+
+// ---------- settings: the practice's outgoing mailbox ----------
+router.get('/practice/settings/email', pm, async (req, res) => res.send(V.mailSettings(await mail.getSettings(), req.session.staff.email)));
+
+router.post('/practice/settings/email', pm, async (req, res) => {
+  const test = req.body.action === 'test';
+  const { error, values } = mail.validate(req.body);
+  const again = async (msg, ok) => res.status(ok ? 200 : 400).send(V.mailSettings(
+    { ...(await mail.getSettings()), ...(values || {}), ...(error ? { smtp_host: req.body.smtp_host, smtp_port: req.body.smtp_port, smtp_user: req.body.smtp_user, from_name: req.body.from_name, from_address: req.body.from_address } : {}) },
+    req.session.staff.email, msg, ok));
+  if (error) return again(error, false);
+  const who = { actorType: 'staff', actorId: req.session.staff.id };
+  if (test) {
+    if (limited(`mailtest|${req.session.staff.id}`, 10, 10 * 60 * 1000)) return again('Too many test emails. Try again in a few minutes.', false);
+    try {
+      await mail.sendMail(req.session.staff.email, 'Test email', mail.testEmail(), values);
+      await audit(req, 'mail.test_sent', who);
+      return again(`Test email sent to ${req.session.staff.email}. These settings are not saved until you press Save.`, true);
+    } catch (e) {
+      await audit(req, 'mail.test_failed', who);
+      return again(`The test email could not be sent: ${e.message}`, false);
+    }
+  }
+  const saved = await mail.saveSettings(values, req.session.staff.id);
+  if (saved.error) return again(saved.error, false);
+  await audit(req, 'mail.settings_saved', { ...who, detail: { host: values.smtp_host, port: values.smtp_port, from: values.from_address, password_changed: !!values.password } });
+  again('Saved.', true);
+});
 
 router.get('/therapist', A.requireRole('therapist', '/staff', V.forbidden), (req, res) =>
   res.send(V.shell(req.session.staff.name, 'Therapist', 'Your clients, sessions and journals will appear here.', A.rolesOf(req.session.staff).length > 1)));

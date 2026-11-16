@@ -41,6 +41,7 @@ app.get('/healthz', async (_req, res) => {
   catch { res.status(503).json({ status: 'unavailable' }); }
 });
 
+app.use(require('./lib/brand').ensureLoaded);
 app.use(require('./routes/auth'));
 
 app.use((err, _req, res, _next) => {
