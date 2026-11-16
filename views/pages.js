@@ -82,7 +82,7 @@ ${rows.map(card).join('')}
 }
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
-function mailSettings(s, myEmail, msg, ok) {
+function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
   return page('Email settings', `<p><strong>Email settings</strong></p>
 <p class="muted">Everything the app sends (sign-in codes and links, and later reminders and consent requests) goes out from this mailbox. Use the outgoing (SMTP) details from your email provider.</p>
 ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
@@ -94,7 +94,7 @@ ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on t
 <label for="smtp_port">Port</label><input id="smtp_port" name="smtp_port" inputmode="numeric" required value="${esc(s.smtp_port)}">
 <label class="check"><input type="checkbox" name="smtp_secure" ${s.smtp_secure ? 'checked' : ''}> Use SSL/TLS from the start (usually port 465). Leave off for port 587.</label>
 <label for="smtp_user">Username (leave blank to use the address above)</label><input id="smtp_user" name="smtp_user" value="${esc(s.smtp_user)}">
-<label for="smtp_password">Password</label><input id="smtp_password" name="smtp_password" type="password" autocomplete="new-password" placeholder="${s.password_set ? 'Saved. Leave blank to keep it' : 'Not set'}">
+<label for="smtp_password">Password${s.password_set ? ' (one is saved; leave blank to keep it)' : ''}</label><input id="smtp_password" name="smtp_password" type="password" autocomplete="new-password" value="${esc(typedPassword)}" placeholder="${s.password_set ? 'Saved. Leave blank to keep it' : 'Not set'}">
 <button name="action" value="test" class="alt">Send a test email to ${esc(myEmail)}</button>
 <button name="action" value="save">Save</button></form>
 <p><a href="/practice">Back</a></p>`);

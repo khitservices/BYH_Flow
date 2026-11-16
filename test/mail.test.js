@@ -96,7 +96,7 @@ test('settings save, the password is sealed and never shown, and a blank passwor
   row = (await q(`SELECT * FROM core.mail_settings WHERE id=1`))[0];
   assert.equal(row.smtp_port, 465); assert.equal(row.smtp_secure, true); assert.equal(row.smtp_password_enc, sealed);
   const page = await c.get('/practice/settings/email');
-  assert.ok(!page.text.includes('S3cret-pass!')); assert.match(page.text, /Leave blank to keep it/);
+  assert.ok(!page.text.includes('S3cret-pass!')); assert.match(page.text, /leave blank to keep it/); assert.match(page.text, /name="smtp_password"[^>]*value=""/);
   const audit = await q(`SELECT detail FROM core.audit_log WHERE action='mail.settings_saved' AND actor_id=$1`, [p.id]);
   assert.ok(audit.length >= 2); assert.ok(!JSON.stringify(audit).includes('S3cret-pass!'));
 });
@@ -107,6 +107,7 @@ test('test email goes to the signed-in manager with the unsaved values and saves
   const before = (await q(`SELECT smtp_host FROM core.mail_settings WHERE id=1`))[0].smtp_host;
   const r = await c.post('/practice/settings/email', form({ action: 'test', smtp_host: 'unsaved.example.test' }));
   assert.equal(r.status, 200); assert.match(r.text, /Test email sent/);
+  assert.match(r.text, /name="smtp_password"[^>]*value="S3cret-pass!"/); // typed password is kept after a test, so Save needs no retyping
   const m = mail.outbox.at(-1);
   assert.equal(m.to, p.email); assert.equal(m.override.smtp_host, 'unsaved.example.test');
   assert.equal((await q(`SELECT smtp_host FROM core.mail_settings WHERE id=1`))[0].smtp_host, before);

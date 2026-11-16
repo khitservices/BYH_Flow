@@ -260,7 +260,10 @@ router.post('/practice/settings/email', pm, async (req, res) => {
   const { error, values } = mail.validate(req.body);
   const again = async (msg, ok) => res.status(ok ? 200 : 400).send(V.mailSettings(
     { ...(await mail.getSettings()), ...(values || {}), ...(error ? { smtp_host: req.body.smtp_host, smtp_port: req.body.smtp_port, smtp_user: req.body.smtp_user, from_name: req.body.from_name, from_address: req.body.from_address } : {}) },
-    req.session.staff.email, msg, ok));
+    req.session.staff.email, msg, ok, keepTyped ? String(req.body.smtp_password || '').slice(0, 500) : ''));
+  // After a test or a rejected form, hand back the password the person just typed so they need not retype it
+  // before saving. Only ever what came in on this request; the saved password is never sent to a browser.
+  let keepTyped = true;
   if (error) return again(error, false);
   const who = { actorType: 'staff', actorId: req.session.staff.id };
   if (test) {
@@ -276,6 +279,7 @@ router.post('/practice/settings/email', pm, async (req, res) => {
   }
   const saved = await mail.saveSettings(values, req.session.staff.id);
   if (saved.error) return again(saved.error, false);
+  keepTyped = false;
   await audit(req, 'mail.settings_saved', { ...who, detail: { host: values.smtp_host, port: values.smtp_port, from: values.from_address, password_changed: !!values.password } });
   again('Saved.', true);
 });
