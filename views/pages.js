@@ -81,6 +81,33 @@ ${rows.map(card).join('')}
 <p><a href="/practice">Back</a></p>`);
 }
 
+// Clients page (therapist account only): this therapist's own clients.
+function clients(rows, msg, ok) {
+  const label = { active: 'Active', readonly: 'Read-only', closed: 'Closed' };
+  const act = (id, action, text, style = 'class="alt"') => `<form method="post" action="/therapist/clients/${id}"><input type="hidden" name="action" value="${action}"><button ${style}>${text}</button></form>`;
+  const card = r => `<section style="border-top:1px solid #ddd;padding:14px 0" aria-label="${esc(r.name)}">
+<p style="margin:0"><strong>${esc(r.name)}</strong><br><span class="muted">${esc(r.email)} · ${label[r.status]}${r.status === 'closed' ? '' : (r.invited_at ? ' · invited' : ' · not yet invited')}</span></p>
+<details><summary>Change</summary>
+<form method="post" action="/therapist/clients/${r.id}"><input type="hidden" name="action" value="edit">
+<label for="cn${r.id}">Name</label><input id="cn${r.id}" name="name" required value="${esc(r.name)}">
+<label for="ce${r.id}">Email</label><input id="ce${r.id}" name="email" type="email" required value="${esc(r.email)}">
+<button class="alt">Save changes</button></form>
+${r.status === 'closed' ? act(r.id, 'reopen', 'Reopen record') : act(r.id, 'invite', 'Send invitation again')
+  + (r.status === 'active' ? act(r.id, 'readonly', 'Make read-only (can sign in and read, not add)') : act(r.id, 'reopen', 'Make active again'))
+  + act(r.id, 'close', 'Close record (stops sign-in)', 'style="background:#b00020"')}
+</details></section>`;
+  return page('Clients', `<p><strong>Your clients</strong></p>
+<p class="muted">Only you can see these. Adding a client emails them an invitation to their own client area.</p>
+${msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : ''}
+${rows.length ? rows.map(card).join('') : '<p class="muted">No clients yet.</p>'}
+<section style="border-top:1px solid #ddd;padding-top:14px"><p><strong>Add a client</strong></p>
+<form method="post" action="/therapist/clients/add">
+<label for="cn">Name</label><input id="cn" name="name" required>
+<label for="ce">Email</label><input id="ce" name="email" type="email" required>
+<button>Add and send invitation</button></form></section>
+<p><a href="/therapist">Back</a></p>`);
+}
+
 // s: settings to show (never a password). msg/ok: result of the last save or test.
 function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
   return page('Email settings', `<p><strong>Email settings</strong></p>
@@ -111,4 +138,4 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, mailSettings };
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, mailSettings };

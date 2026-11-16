@@ -286,9 +286,6 @@ router.post('/practice/settings/email', pm, async (req, res) => {
   again('Saved.', true);
 });
 
-router.get('/therapist', A.requireRole('therapist', '/staff', V.forbidden), (req, res) =>
-  res.send(V.shell(req.session.staff.name, 'Therapist', 'Your clients, sessions and journals will appear here.')));
-
 router.get('/journal', A.requireRole('client', '/', V.forbidden), (req, res) =>
   res.send(V.shell(req.session.client.name, 'Client', 'Your journal will appear here.')));
 
