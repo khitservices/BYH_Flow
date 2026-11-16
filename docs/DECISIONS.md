@@ -106,7 +106,7 @@
 - **Order:** therapist section and practice management first, using the BYH and ITC apps as the starting point;
   then the client area, which is close to a lift and shift from BYH.
   1. Client record (done): programme in sessions, sessions had before joining, under-16 consent, reminder settings.
-  2. Booking and schedule (done). 3. Therapist account page. 4. Practice management (move clients, statistics, clean-up).
+  2. Booking and schedule (done). 3. Therapist account page (done). 4. Practice management (move clients, statistics, clean-up).
   5. Enquiries and documents (BYH enquiries plus the ITC pipeline). 6. Client area. 7. Reminders and daily digest.
 - **Client area addition (step 6):** alongside the journal entry, the client can record a score from 1 to 10 for
   how they feel. Open: whether it is optional on each entry, and whether the therapist sees the scores as a trend

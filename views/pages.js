@@ -57,7 +57,7 @@ function team(rows, myId, msg, ok) {
   const short = { therapist: 'Therapist', practice_manager: 'Practice manager' };
   const others = id => rows.filter(r => r.role === 'therapist' && r.status === 'active' && r.id !== id);
   const card = r => `<section style="border-top:1px solid #ddd;padding:14px 0" aria-label="${esc(r.name)}">
-<p style="margin:0"><strong>${esc(r.name)}</strong>${r.id === myId ? ' (you)' : ''}<br><span class="muted">${esc(short[r.role])} · ${esc(r.email)} · ${r.status === 'active' ? (r.invited_at ? 'Active' : 'Active, not yet invited') : 'Suspended'}${r.role === 'therapist' ? ` · ${r.clients} client${r.clients === 1 ? '' : 's'}` : ''}</span></p>
+<p style="margin:0"><strong>${esc(r.name)}</strong>${r.id === myId ? ' (you)' : ''}<br><span class="muted">${esc(short[r.role])} · ${esc(r.email)} · ${r.status === 'active' ? (r.invited_at ? 'Active' : 'Active, not yet invited') : 'Suspended'}${r.role === 'therapist' ? ` · ${r.clients} client${r.clients === 1 ? '' : 's'}` : ''}</span>${r.close_requested_at ? '<br><strong style="color:#8a4a00">Has asked for this account to be closed</strong>' : ''}</p>
 <details><summary>Change</summary>
 <form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="edit">
 <label for="n${r.id}">Name</label><input id="n${r.id}" name="name" required value="${esc(r.name)}">
@@ -156,7 +156,7 @@ function therapistHome(who, clientCount, today) {
   return page('Therapist', `<p>Signed in as <strong>${esc(who)}</strong> (Therapist).</p>
 <section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Today</strong></p>
 ${today.length ? today.map(a => `<p style="margin:4px 0">${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted" style="margin:0">No sessions today.</p>'}</section>
-<p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p>
+<p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p><p><a href="/therapist/account">Account</a></p>
 <p><a href="/logout">Sign out</a></p>`);
 }
 
@@ -210,6 +210,26 @@ const feedLink = url => page('Your calendar link', `<p><strong>Your calendar lin
 <p class="muted">In your calendar app choose "add calendar from the internet" or "subscribe", and paste it. Treat it like a password: anyone with the link can see your session times.</p>
 <p><a href="/therapist/schedule">Back to schedule</a></p>`);
 
+function therapistAccount(me, mine, colleagues, msg, ok) {
+  const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
+  const post = (action, inner) => `<form method="post" action="/therapist/account"><input type="hidden" name="action" value="${action}">${inner}</form>`;
+  return page('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
+${sec('Relaxation link', `<p class="muted" style="margin:0">A recording or page you want your clients to be able to open from their client area. Leave blank for none.</p>
+${post('relax', `<label for="rx">Web address</label><input id="rx" name="relax_url" inputmode="url" placeholder="https://" value="${esc(me.relax_url)}"><button class="alt">Save link</button>`)}`)}
+${sec('Hand clients over to a colleague', !mine.length ? '<p class="muted" style="margin:0">You have no clients to hand over.</p>'
+    : !colleagues.length ? '<p class="muted" style="margin:0">There is no other therapist in this practice to hand over to.</p>'
+    : `<p class="muted" style="margin:0">The clients you choose move to your colleague, with their sessions and records, and each is told by email. You will no longer see them.</p>
+${post('handover', `<label for="to">Hand over to</label><select id="to" name="to" required ${sel}><option value="">Choose a colleague</option>${opts(colleagues.map(c => [c.id, c.name]))}</select>
+<label class="check"><input type="radio" name="scope" value="some" checked> Only the clients ticked below</label>
+<label class="check"><input type="radio" name="scope" value="all"> All my clients</label>
+${mine.map(c => `<label class="check"><input type="checkbox" name="client_id" value="${c.id}"> ${esc(c.name)}</label>`).join('')}
+<button class="alt">Hand over</button>`)}`)}
+${sec('Close my account', me.close_requested_at
+    ? `<p class="muted" style="margin:0">You asked for this account to be closed on ${day(me.close_requested_at)}. The practice manager has been told; nothing changes until they act.</p>${post('withdraw_close', '<button class="alt">Withdraw my request</button>')}`
+    : `<p class="muted" style="margin:0">This asks the practice manager to close your account. It is not instant. Hand your clients over first if they are continuing with a colleague.</p>${post('request_close', '<button class="alt">Ask to close my account</button>')}`)}
+<p><a href="/therapist">Back</a></p>`);
+}
+
 // s: settings to show (never a password). msg/ok: result of the last save or test.
 function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
   return page('Email settings', `<p><strong>Email settings</strong></p>
@@ -240,4 +260,4 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, mailSettings };
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

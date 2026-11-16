@@ -45,6 +45,7 @@ app.use(require('./lib/brand').ensureLoaded);
 app.use(require('./routes/auth'));
 app.use(require('./routes/sessions').router);
 app.use(require('./routes/therapist'));
+app.use(require('./routes/account'));
 
 app.use((err, _req, res, _next) => {
   console.error('[error]', err.message);

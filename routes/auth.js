@@ -158,7 +158,7 @@ const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
 const cleanName = v => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 100);
 
 async function teamPage(req, res, msg, ok) {
-  const team = await q(`SELECT s.id, s.name, s.email, s.role, s.status, s.invited_at,
+  const team = await q(`SELECT s.id, s.name, s.email, s.role, s.status, s.invited_at, s.close_requested_at,
       (SELECT count(*)::int FROM clinical.clients c WHERE c.therapist_id = s.id AND c.status <> 'closed') AS clients
     FROM core.staff s WHERE s.status <> 'removed' ORDER BY s.role DESC, lower(s.name)`);
   res.status(ok === false ? 400 : 200).send(V.team(team, req.session.staff.id, msg, ok));
@@ -215,7 +215,7 @@ router.post('/practice/team/:id', pm, async (req, res) => {
   // so a practice can never be left with no working practice manager.
   if (staff.id === me.id) return teamPage(req, res, 'You cannot suspend or remove the account you are signed in with. Ask another practice manager.', false);
   if (action === 'reactivate') {
-    await q(`UPDATE core.staff SET status='active' WHERE id=$1`, [staff.id]);
+    await q(`UPDATE core.staff SET status='active', close_requested_at=NULL WHERE id=$1`, [staff.id]);
     await log('team.reactivated');
     return teamPage(req, res, `${staff.name} can sign in again.`, true);
   }
@@ -234,7 +234,7 @@ router.post('/practice/team/:id', pm, async (req, res) => {
       moved = (await q(`UPDATE clinical.clients SET therapist_id=$2 WHERE therapist_id=$1 RETURNING id`, [staff.id, to.id])).length;
       await audit(req, 'team.clients_reassigned', { actorType: 'staff', actorId: me.id, subjectType: 'staff', subjectId: to.id, detail: { from: staff.id, count: moved } });
     }
-    await q(`UPDATE core.staff SET status='removed' WHERE id=$1`, [staff.id]);
+    await q(`UPDATE core.staff SET status='removed', close_requested_at=NULL, cal_feed_hash=NULL WHERE id=$1`, [staff.id]);
     await A.endStaffSessions(staff.id);
     await log('team.removed');
     return teamPage(req, res, `${staff.name} was removed.${moved ? ` ${moved} client${moved === 1 ? ' was' : 's were'} moved to the therapist you chose.` : ''}`, true);
