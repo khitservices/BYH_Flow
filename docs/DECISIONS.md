@@ -85,8 +85,21 @@
 - **Guards.** A manager cannot suspend or remove the account they are signed in with, so a practice always has a
   working manager. Suspending or removing someone signs them out at once. Removing a therapist who has clients
   requires choosing the therapist who takes them over; the move is audited and shows no client details.
-- **Proposed, not yet confirmed:** the manager sees enquiry totals only (by source and stage, no names); the public
-  enquiry form has a link per therapist; the mock-up's manager screen (enquiry list, follow-ups) is out of date.
+- **Manager sees practice statistics, never patient detail** (confirmed 2026-11-16): counts by channel, stage and
+  therapist. No names, contact details or anything a person wrote. The mock-up's manager screen (enquiry list,
+  follow-ups) is out of date.
+
+## Enquiry routes (2026-11-16, phase 3)
+
+- **One enquiry form, reached four ways:** the practice website, a therapist's own page, a Google ad link, and
+  Facebook. Phone capture by the therapist stays as the fifth route.
+- **Each therapist either runs their own contact set-up or uses the practice default.** Every enquiry still ends
+  up belonging to one therapist.
+- **Proposed:** each route is a link that carries the therapist (or "practice default") and the channel, so the
+  channel is recorded automatically and feeds the manager's statistics; the person is not asked how they heard.
+- **Open:** how a practice-default enquiry reaches a therapist without the manager seeing who enquired; what
+  "contact set-up" covers beyond the links (follow-up wording and timings?); whether the website shows the form
+  embedded or links to it; whether ad click identifiers are kept (data-protection adviser).
 
 ## Phases
 
