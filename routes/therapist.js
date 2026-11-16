@@ -1,6 +1,7 @@
 // routes/therapist.js — the therapist account's own clients. CLINICAL: every route is behind
 // requireRole('therapist'), and every query is limited to the signed-in therapist's own clients,
 // so one therapist can never see or change another's, and a practice manager account cannot get here at all.
+// Carried over from the BYH app's therapist section (add client, client page, manage programme).
 const express = require('express');
 const { q, one } = require('../lib/db');
 const A = require('../lib/auth');
@@ -12,21 +13,30 @@ const V = require('../views/pages');
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
 const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
-const cleanName = v => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 100);
+const LENGTHS = [6, 8, 10, 12];
+const RESUME_DAYS = 28; // reopened within this: same programme carries on; after it: a fresh programme
+const text = (v, max = 100) => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 const norm = e => String(e || '').trim().toLowerCase().slice(0, 254);
+const length = (v, fallback) => (LENGTHS.includes(Number(v)) ? Number(v) : fallback);
+const dow = v => (Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 6 ? Number(v) : 3);
+
+// Which session the client is on. Booked sessions are added to this count when booking is built.
+const position = c => ({ on: Math.min(c.sessions_before_app + 1, c.programme_sessions), of: c.programme_sessions });
+
+// "AND therapist_id" is the access rule: someone else's client is simply not found.
+const own = (req) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(req.params.id) || 0, req.session.staff.id]);
 
 router.get('/therapist', th, async (req, res) => {
   const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [req.session.staff.id]);
-  res.send(V.shell(req.session.staff.name, 'Therapist', 'Sessions and journals will appear here as they are built.', [
+  res.send(V.shell(req.session.staff.name, 'Therapist', 'Booking, schedule and journals will appear here as they are built.', [
     { href: '/therapist/clients', label: `Clients (${n})` },
   ]));
 });
 
-async function clientsPage(req, res, msg, ok) {
-  const rows = await q(`SELECT id, name, email, status, invited_at FROM clinical.clients WHERE therapist_id=$1
-                        ORDER BY (status='closed'), lower(name)`, [req.session.staff.id]);
-  res.status(ok === false ? 400 : 200).send(V.clients(rows, msg, ok));
-}
+router.get('/therapist/clients', th, async (req, res) => {
+  const rows = await q(`SELECT * FROM clinical.clients WHERE therapist_id=$1 ORDER BY (status='closed'), lower(name)`, [req.session.staff.id]);
+  res.send(V.clients(rows.map(c => ({ ...c, pos: position(c) }))));
+});
 
 async function sendInvite(client, therapist) {
   try {
@@ -36,50 +46,132 @@ async function sendInvite(client, therapist) {
   } catch (e) { console.error('[clients] invite failed:', e.message); return false; }
 }
 
-router.get('/therapist/clients', th, (req, res) => clientsPage(req, res));
+router.get('/therapist/clients/add', th, (_req, res) => res.send(V.clientAdd({})));
 
 router.post('/therapist/clients/add', th, async (req, res) => {
-  const me = req.session.staff, name = cleanName(req.body.name), email = norm(req.body.email);
-  if (!name) return clientsPage(req, res, 'Enter the client\'s name.', false);
-  if (!EMAIL_RE.test(email)) return clientsPage(req, res, 'Enter a valid email address.', false);
-  if (await one(`SELECT 1 FROM clinical.clients WHERE lower(email)=$1`, [email])) return clientsPage(req, res, 'That email address already belongs to a client record in this practice.', false);
-  const [client] = await q(`INSERT INTO clinical.clients (therapist_id, name, email) VALUES ($1,$2,$3) RETURNING *`, [me.id, name, email]);
-  await audit(req, 'client.created', { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id });
+  const me = req.session.staff, b = req.body;
+  const f = {
+    name: text(b.name), email: norm(b.email), phone: text(b.phone, 40), under16: b.under16 === 'on',
+    sessions: length(b.sessions, 8), reminder_dow: dow(b.reminder_dow),
+    guardian_name: text(b.guardian_name), guardian_email: norm(b.guardian_email), guardian_phone: text(b.guardian_phone, 40),
+    consent_note: text(b.consent_note, 500), consent_date: text(b.consent_date, 10),
+  };
+  // Joining part-way through: must leave at least one session to come.
+  let prior = Number(b.sessions_before_app);
+  if (!Number.isInteger(prior) || prior < 0) prior = 0;
+  f.sessions_before_app = Math.min(prior, f.sessions - 1);
+  const again = msg => res.status(400).send(V.clientAdd(f, msg));
+
+  if (!f.name) return again("Enter the client's name.");
+  if (!EMAIL_RE.test(f.email)) return again('Enter a valid email address.');
+  const existing = await one(`SELECT id, therapist_id FROM clinical.clients WHERE lower(email)=$1`, [f.email]);
+  // Never say whose client it is: that would leak another therapist's client list.
+  if (existing) return again(existing.therapist_id === me.id ? 'That email address already belongs to one of your clients. Open their record to reopen or change it.' : 'That email address already belongs to a client record in this practice.');
+
+  let consent = { status: 'n/a', at: null, method: null, note: null, by: null };
+  if (f.under16) {
+    if (b.consent_confirmed !== 'on') return again('For a client under 16, confirm that a parent or guardian has given consent before adding them.');
+    if (!f.guardian_name) return again("Enter the parent or guardian's name.");
+    if (f.guardian_email && !EMAIL_RE.test(f.guardian_email)) return again("The parent or guardian's email address does not look right.");
+    const d = f.consent_date ? new Date(f.consent_date) : new Date();
+    consent = { status: 'granted', at: isNaN(d) || d > new Date() ? new Date() : d, method: 'in_person', note: f.consent_note || null, by: me.id };
+  }
+  const [client] = await q(
+    `INSERT INTO clinical.clients (therapist_id, name, email, phone, under16, guardian_name, guardian_email, guardian_phone,
+       consent_status, consent_at, consent_method, consent_note, consent_recorded_by, programme_sessions, sessions_before_app, reminder_dow)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+    [me.id, f.name, f.email, f.phone || null, f.under16, f.under16 ? f.guardian_name : null, f.under16 ? f.guardian_email || null : null,
+     f.under16 ? f.guardian_phone || null : null, consent.status, consent.at, consent.method, consent.note, consent.by,
+     f.sessions, f.sessions_before_app, f.reminder_dow]);
+  const who = { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id };
+  await audit(req, 'client.created', { ...who, detail: { under16: f.under16 } });
+  if (f.under16) await audit(req, 'client.consent_attested', who);
   const sent = await sendInvite(client, me);
-  if (sent) await audit(req, 'client.invited', { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id });
-  clientsPage(req, res, sent ? `${name} was added and has been emailed an invitation to their client area.` : `${name} was added, but the invitation email could not be sent. Use "Send invitation again" once email is working.`, true);
+  if (sent) await audit(req, 'client.invited', who);
+  res.redirect(`/therapist/client/${client.id}?msg=${sent ? 'added' : 'added_nomail'}`);
 });
 
-router.post('/therapist/clients/:id', th, async (req, res) => {
+const MSG = {
+  added: ['Added, and an invitation to their client area has been emailed.', true],
+  added_nomail: ['Added, but the invitation email could not be sent. Use "Send invitation again" once email is working.', false],
+  saved: ['Saved.', true], invited: ['Invitation sent.', true], invite_failed: ['The invitation email could not be sent.', false],
+  closed_no_invite: ['Reopen the record before sending an invitation.', false],
+  details: ['Enter a name and a valid email address.', false], taken: ['That email address already belongs to a client record in this practice.', false],
+  extended: ['Programme extended.', true], reminders: ['Reminder setting changed.', true],
+  readonly: ['They can still sign in and read, but not add anything.', true], closed: ['Record closed. They can no longer sign in.', true],
+  resumed: ['Record reopened. Their programme carries on where it left off.', true], fresh: ['Record reopened with a new programme. The earlier one is kept separately.', true],
+  active: ['Record is active.', true], unknown: ['Unknown action.', false],
+};
+
+router.get('/therapist/client/:id', th, async (req, res) => {
+  const c = await own(req);
+  if (!c) return res.status(404).send(V.forbidden());
+  await audit(req, 'client.viewed', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'client', subjectId: c.id });
+  const m = MSG[String(req.query.msg || '')];
+  const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c), freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS }, m && m[0], m ? m[1] : undefined));
+});
+
+router.post('/therapist/client/:id', th, async (req, res) => {
   const me = req.session.staff, action = String(req.body.action || '');
-  // "AND therapist_id" is the access rule: someone else's client is simply not found.
-  const client = await one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(req.params.id) || 0, me.id]);
-  if (!client) return res.status(404).send(V.forbidden());
-  const log = (what, detail) => audit(req, what, { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id, detail });
-  const endSessions = () => q(`DELETE FROM core.sessions WHERE client_id=$1`, [client.id]);
+  const c = await own(req);
+  if (!c) return res.status(404).send(V.forbidden());
+  const done = msg => res.redirect(`/therapist/client/${c.id}?msg=${msg}`);
+  const log = (what, detail) => audit(req, what, { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: c.id, detail });
+  const endSessions = () => q(`DELETE FROM core.sessions WHERE client_id=$1`, [c.id]);
 
   if (action === 'invite') {
-    if (client.status === 'closed') return clientsPage(req, res, 'Reopen the record before sending an invitation.', false);
-    const sent = await sendInvite(client, me);
+    if (c.status === 'closed') return done('closed_no_invite');
+    const sent = await sendInvite(c, me);
     if (sent) await log('client.invited');
-    return clientsPage(req, res, sent ? `Invitation sent to ${client.name}.` : 'The invitation email could not be sent.', sent);
+    return done(sent ? 'invited' : 'invite_failed');
   }
   if (action === 'edit') {
-    const name = cleanName(req.body.name), email = norm(req.body.email);
-    if (!name || !EMAIL_RE.test(email)) return clientsPage(req, res, 'Enter a name and a valid email address.', false);
-    if (await one(`SELECT 1 FROM clinical.clients WHERE lower(email)=$1 AND id<>$2`, [email, client.id])) return clientsPage(req, res, 'That email address already belongs to a client record in this practice.', false);
-    const emailChanged = email !== client.email.toLowerCase();
-    await q(`UPDATE clinical.clients SET name=$2, email=$3 WHERE id=$1`, [client.id, name, email]);
-    if (emailChanged) await endSessions();
+    const name = text(req.body.name), email = norm(req.body.email), phone = text(req.body.phone, 40);
+    if (!name || !EMAIL_RE.test(email)) return done('details');
+    if (await one(`SELECT 1 FROM clinical.clients WHERE lower(email)=$1 AND id<>$2`, [email, c.id])) return done('taken');
+    const emailChanged = email !== c.email.toLowerCase();
+    await q(`UPDATE clinical.clients SET name=$2, email=$3, phone=$4 WHERE id=$1`, [c.id, name, email, phone || null]);
+    if (emailChanged) await endSessions(); // a new address must prove itself with a fresh sign-in
     await log('client.edited', { email_changed: emailChanged });
-    return clientsPage(req, res, 'Saved.', true);
+    return done('saved');
   }
-  const next = { close: 'closed', readonly: 'readonly', reopen: 'active' }[action];
-  if (!next) return clientsPage(req, res, 'Unknown action.', false);
-  await q(`UPDATE clinical.clients SET status=$2 WHERE id=$1`, [client.id, next]);
-  if (next === 'closed') await endSessions();
-  await log('client.status_changed', { status: next });
-  clientsPage(req, res, { closed: `${client.name}'s record is closed. They can no longer sign in.`, readonly: `${client.name} can still sign in and read, but not add anything.`, active: `${client.name}'s record is active.` }[next], true);
+  if (action === 'extend') {
+    const add = length(req.body.add_sessions, 6);
+    if (c.programme_sessions + add > 60) return done('unknown');
+    await q(`UPDATE clinical.clients SET programme_sessions=programme_sessions+$2, status='active', closed_at=NULL WHERE id=$1`, [c.id, add]);
+    await log('client.programme_extended', { add });
+    return done('extended');
+  }
+  if (action === 'reminders') {
+    await q(`UPDATE clinical.clients SET reminders_on=$2, reminder_dow=$3 WHERE id=$1`, [c.id, req.body.reminders_on === 'on', dow(req.body.reminder_dow)]);
+    await log('client.reminders_changed');
+    return done('reminders');
+  }
+  if (action === 'readonly') {
+    await q(`UPDATE clinical.clients SET status='readonly' WHERE id=$1`, [c.id]);
+    await log('client.status_changed', { status: 'readonly' });
+    return done('readonly');
+  }
+  if (action === 'close') {
+    await q(`UPDATE clinical.clients SET status='closed', closed_at=now() WHERE id=$1`, [c.id]);
+    await endSessions();
+    await log('client.status_changed', { status: 'closed' });
+    return done('closed');
+  }
+  if (action === 'reopen') {
+    const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
+    if (c.status !== 'closed' || gapDays <= RESUME_DAYS) {
+      await q(`UPDATE clinical.clients SET status='active', closed_at=NULL WHERE id=$1`, [c.id]);
+      await log('client.status_changed', { status: 'active' });
+      return done(c.status === 'closed' ? 'resumed' : 'active');
+    }
+    await q(`UPDATE clinical.clients SET status='active', closed_at=NULL, programme_number=programme_number+1, programme_sessions=$2,
+             sessions_before_app=0, programme_started_at=now() WHERE id=$1`, [c.id, length(req.body.sessions, 8)]);
+    await log('client.status_changed', { status: 'active', new_programme: true });
+    return done('fresh');
+  }
+  done('unknown');
 });
 
 module.exports = router;

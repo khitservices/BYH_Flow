@@ -88,7 +88,7 @@ router.post('/request-link', async (req, res) => {
   res.cookie('pk', pollKey, { httpOnly: true, signed: true, sameSite: 'lax', secure, maxAge: 16 * 60 * 1000 });
   if (!limited(`link|${req.ip}|${email}`, 5, 10 * 60 * 1000)) {
     try {
-      const client = await one(`SELECT * FROM clinical.clients WHERE lower(email)=$1 AND status='active'`, [email]);
+      const client = await one(`SELECT * FROM clinical.clients WHERE lower(email)=$1 AND status IN ('active','readonly')`, [email]);
       if (client) {
         const token = await A.issueClientLink(client, pollKey);
         await mail.sendMail(client.email, 'Your sign-in link', mail.clientLinkEmail(client.name, `${process.env.BASE_URL}/auth/${token}`));
@@ -105,7 +105,7 @@ router.get('/auth/poll', async (req, res) => {
   if (!pk) return res.json({ ready: false });
   const claimed = await A.claimPoll(pk);
   if (!claimed) return res.json({ ready: false });
-  const client = await one(`SELECT id FROM clinical.clients WHERE id=$1 AND status='active'`, [claimed.client_id]);
+  const client = await one(`SELECT id FROM clinical.clients WHERE id=$1 AND status IN ('active','readonly')`, [claimed.client_id]);
   if (!client) return res.json({ ready: false });
   await startSession(req, res, { clientId: client.id, role: 'client' }, 'client.signed_in', { actorType: 'client', actorId: client.id, detail: { via: 'poll' } });
   res.clearCookie('pk');
@@ -121,7 +121,7 @@ router.get('/auth/:token', async (req, res) => {
 router.post('/auth/:token', async (req, res) => {
   const used = await A.consumeClientLink(req.params.token);
   if (!used) return res.status(400).send(V.linkExpired());
-  const client = await one(`SELECT id FROM clinical.clients WHERE id=$1 AND status='active'`, [used.client_id]);
+  const client = await one(`SELECT id FROM clinical.clients WHERE id=$1 AND status IN ('active','readonly')`, [used.client_id]);
   if (!client) return res.status(400).send(V.linkExpired());
   await startSession(req, res, { clientId: client.id, role: 'client' }, 'client.signed_in', { actorType: 'client', actorId: client.id, detail: { via: 'link' } });
   res.redirect('/journal');

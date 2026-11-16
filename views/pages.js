@@ -81,31 +81,70 @@ ${rows.map(card).join('')}
 <p><a href="/practice">Back</a></p>`);
 }
 
-// Clients page (therapist account only): this therapist's own clients.
-function clients(rows, msg, ok) {
-  const label = { active: 'Active', readonly: 'Read-only', closed: 'Closed' };
-  const act = (id, action, text, style = 'class="alt"') => `<form method="post" action="/therapist/clients/${id}"><input type="hidden" name="action" value="${action}"><button ${style}>${text}</button></form>`;
-  const card = r => `<section style="border-top:1px solid #ddd;padding:14px 0" aria-label="${esc(r.name)}">
-<p style="margin:0"><strong>${esc(r.name)}</strong><br><span class="muted">${esc(r.email)} · ${label[r.status]}${r.status === 'closed' ? '' : (r.invited_at ? ' · invited' : ' · not yet invited')}</span></p>
-<details><summary>Change</summary>
-<form method="post" action="/therapist/clients/${r.id}"><input type="hidden" name="action" value="edit">
-<label for="cn${r.id}">Name</label><input id="cn${r.id}" name="name" required value="${esc(r.name)}">
-<label for="ce${r.id}">Email</label><input id="ce${r.id}" name="email" type="email" required value="${esc(r.email)}">
-<button class="alt">Save changes</button></form>
-${r.status === 'closed' ? act(r.id, 'reopen', 'Reopen record') : act(r.id, 'invite', 'Send invitation again')
-  + (r.status === 'active' ? act(r.id, 'readonly', 'Make read-only (can sign in and read, not add)') : act(r.id, 'reopen', 'Make active again'))
-  + act(r.id, 'close', 'Close record (stops sign-in)', 'style="background:#b00020"')}
-</details></section>`;
-  return page('Clients', `<p><strong>Your clients</strong></p>
-<p class="muted">Only you can see these. Adding a client emails them an invitation to their own client area.</p>
-${msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : ''}
-${rows.length ? rows.map(card).join('') : '<p class="muted">No clients yet.</p>'}
-<section style="border-top:1px solid #ddd;padding-top:14px"><p><strong>Add a client</strong></p>
-<form method="post" action="/therapist/clients/add">
-<label for="cn">Name</label><input id="cn" name="name" required>
-<label for="ce">Email</label><input id="ce" name="email" type="email" required>
-<button>Add and send invitation</button></form></section>
+// ---- therapist account: clients (carried over from the BYH app's therapist section) ----
+const STATUS = { active: 'Active', readonly: 'Read-only', closed: 'Closed' };
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const sel = 'style="font-size:16px;padding:11px;width:100%;margin:6px 0;border-radius:6px;border:1px solid #bbb;background:#fff"';
+const opts = (list, chosen) => list.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(chosen) ? ' selected' : ''}>${esc(t)}</option>`).join('');
+const lengthOpts = chosen => opts([6, 8, 10, 12].map(n => [n, `${n} sessions`]), chosen);
+const dayOpts = chosen => opts(DAYS.map((d, i) => [i, d]), chosen);
+const note = (msg, ok) => (msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : '');
+const day = d => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+
+function clients(rows) {
+  const row = r => `<p style="border-top:1px solid #ddd;padding:12px 0;margin:0"><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a><br>
+<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : ` · session ${r.pos.on} of ${r.pos.of}`}${r.under16 ? ' · under 16' : ''}</span></p>`;
+  return page('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
+${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}
+<form method="get" action="/therapist/clients/add" style="border-top:1px solid #ddd;padding-top:12px"><button>Add a client</button></form>
 <p><a href="/therapist">Back</a></p>`);
+}
+
+function clientAdd(f, msg) {
+  return page('Add a client', `<p><strong>Add a client</strong></p>
+<p class="muted">They are emailed an invitation to their own client area.</p>${note(msg, false)}
+<form method="post" action="/therapist/clients/add">
+<label for="name">Name</label><input id="name" name="name" required value="${esc(f.name)}">
+<label for="email">Email (they sign in with this)</label><input id="email" name="email" type="email" required value="${esc(f.email)}">
+<label for="phone">Phone (optional)</label><input id="phone" name="phone" type="tel" value="${esc(f.phone)}">
+<label for="sessions">Programme length</label><select id="sessions" name="sessions" ${sel}>${lengthOpts(f.sessions || 8)}</select>
+<label for="sba">Sessions already had before joining (0 for a new client)</label><input id="sba" name="sessions_before_app" inputmode="numeric" value="${esc(f.sessions_before_app || 0)}">
+<label for="rd">Weekly journal reminder day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(f.reminder_dow ?? 3)}</select>
+<fieldset style="border:1px solid #ddd;border-radius:6px;margin:16px 0 8px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Under 16</legend>
+<label class="check"><input type="checkbox" name="under16" ${f.under16 ? 'checked' : ''}> This client is under 16</label>
+<p class="muted" style="margin:8px 0 0">If so, fill in the rest of this box. Consent is given to you in person; you record it here.</p>
+<label for="gn">Parent or guardian's name</label><input id="gn" name="guardian_name" value="${esc(f.guardian_name)}">
+<label for="ge">Their email (optional)</label><input id="ge" name="guardian_email" type="email" value="${esc(f.guardian_email)}">
+<label for="gp">Their phone (optional)</label><input id="gp" name="guardian_phone" type="tel" value="${esc(f.guardian_phone)}">
+<label for="cd">Date consent was given</label><input id="cd" name="consent_date" type="date" value="${esc(f.consent_date)}">
+<label for="cnote">Note (optional, for example how it was given)</label><input id="cnote" name="consent_note" maxlength="500" value="${esc(f.consent_note)}">
+<label class="check"><input type="checkbox" name="consent_confirmed"> I confirm a parent or guardian has given consent</label></fieldset>
+<button>Add and send invitation</button></form><p><a href="/therapist/clients">Back</a></p>`);
+}
+
+function clientRecord(c, msg, ok) {
+  const post = (action, inner) => `<form method="post" action="/therapist/client/${c.id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
+  const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
+  const closed = c.status === 'closed';
+  return page(c.name, `<p><strong>${esc(c.name)}</strong>${c.under16 ? ' <span class="muted">(under 16)</span>' : ''}<br>
+<span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}` : ` · session ${c.pos.on} of ${c.pos.of}`}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
+${note(msg, ok)}
+${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? ` · ${esc(c.phone)}` : ''}<br>${c.invited_at ? `Invited ${day(c.invited_at)}` : 'Not yet invited'}</p>
+<details><summary>Change details</summary>${post('edit', `<label for="name">Name</label><input id="name" name="name" required value="${esc(c.name)}">
+<label for="email">Email</label><input id="email" name="email" type="email" required value="${esc(c.email)}">
+<label for="phone">Phone</label><input id="phone" name="phone" type="tel" value="${esc(c.phone)}"><button class="alt">Save changes</button>`)}</details>
+${closed ? '' : post('invite', '<button class="alt">Send invitation again</button>')}`)}
+${c.under16 ? sec('Consent (under 16)', `<p class="muted" style="margin:0">Parent or guardian: ${esc(c.guardian_name)}${c.guardian_email ? ` · ${esc(c.guardian_email)}` : ''}${c.guardian_phone ? ` · ${esc(c.guardian_phone)}` : ''}<br>
+Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}</p>`) : ''}
+${closed ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_sessions} sessions${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
+${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
+${closed ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
+<label for="rd">Day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(c.reminder_dow)}</select><button class="alt">Save reminder setting</button>`))}
+${sec('Record', closed
+    ? post('reopen', `${c.freshOnReopen ? `<p class="muted" style="margin:0">Closed more than four weeks ago, so reopening starts a new programme. The earlier one is kept separately.</p><label for="ns">New programme length</label><select id="ns" name="sessions" ${sel}>${lengthOpts(8)}</select>` : '<p class="muted" style="margin:0">Closed within the last four weeks, so reopening carries on the same programme.</p>'}<button>Reopen record</button>`)
+    : (c.status === 'active' ? post('readonly', '<button class="alt">Make read-only (can sign in and read, not add)</button>') : post('reopen', '<button class="alt">Make active again</button>'))
+      + post('close', '<button style="background:#b00020">Close record (stops sign-in)</button>'))}
+<p><a href="/therapist/clients">Back to clients</a></p>`);
 }
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
@@ -138,4 +177,4 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, mailSettings };
+module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, mailSettings };

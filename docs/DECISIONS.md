@@ -101,6 +101,24 @@
   "contact set-up" covers beyond the links (follow-up wording and timings?); whether the website shows the form
   embedded or links to it; whether ad click identifiers are kept (data-protection adviser).
 
+## Build-out from the existing apps (2026-11-16)
+
+- **Order:** therapist section and practice management first, using the BYH and ITC apps as the starting point;
+  then the client area, which is close to a lift and shift from BYH.
+  1. Client record (done): programme in sessions, sessions had before joining, under-16 consent, reminder settings.
+  2. Booking and schedule. 3. Therapist account page. 4. Practice management (move clients, statistics, clean-up).
+  5. Enquiries and documents (BYH enquiries plus the ITC pipeline). 6. Client area. 7. Reminders and daily digest.
+- **No Graph in this phase; revisit later.** BYH created Microsoft calendar meetings for sessions and had "send as"
+  and calendar sync. Not carried over. Instead: appointment emails carry a calendar file, the therapist gets a
+  private calendar feed to subscribe to, and changes send an updated file. Lost for now: clients accepting or
+  declining from their calendar, and instant updates in the therapist's calendar.
+- **Under-16 consent follows BYH:** given in person and attested by the therapist when adding the client; the record
+  cannot be created without it; the young person signs in with their own email; nothing is emailed to the guardian.
+  (An earlier idea in this project of a consent link to the guardian is not built.)
+- **Reopening a closed record** follows BYH: within four weeks the same programme carries on; after that a new
+  programme starts and the earlier one is kept separately.
+- **Read-only clients can sign in and read** (fixed: sign-in previously refused them).
+
 ## Phases
 
 1. Foundations (this branch)
