@@ -132,9 +132,11 @@ router.get('/ping', async (req, res) => { const s = await A.getSession(req); res
 
 router.get('/logout', async (req, res) => {
   const id = req.signedCookies && req.signedCookies.sid;
+  // Staff go back to the team sign-in page, clients to theirs, so nobody types their address into the wrong one.
+  const s = id ? await A.getSession(req) : null;
   if (id) await A.destroySession(id);
   res.clearCookie('sid');
-  res.redirect('/');
+  res.redirect(s && s.staff ? '/staff' : '/');
 });
 
 // ---------- landing shells (real screens arrive in later phases) ----------

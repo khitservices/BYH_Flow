@@ -51,6 +51,8 @@ test('therapist signs in with an emailed code and reaches clinical area', { skip
   const r = await staffLogin(c, s.email);
   assert.equal(r.status, 302); assert.equal(r.loc, '/therapist');
   assert.equal((await c.get('/therapist')).status, 200);
+  assert.equal((await c.get('/logout')).loc, '/staff'); // staff return to the team sign-in page, not the client one
+  assert.equal((await c.get('/therapist')).status, 302);
 });
 
 test('practice manager (not a therapist) is refused clinical routes', { skip }, async () => {

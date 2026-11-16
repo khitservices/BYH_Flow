@@ -17,9 +17,9 @@ a{color:${BRAND.colorPrimary}} .muted{color:#666;font-size:14px} form.inline{dis
 </style></head><body><main><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
 }
 
-const clientLogin = () => page('Sign in', `<p>Enter your email and we'll send you a sign-in link.</p>
+const clientLogin = () => page('Client sign-in', `<p><strong>Client sign-in</strong></p><p>Enter your email and we'll send you a sign-in link.</p>
 <form method="post" action="/request-link"><input name="email" type="email" autocomplete="email" required placeholder="Your email">
-<button>Email me a link</button></form><p class="muted"><a href="/staff">Team sign-in</a></p>`);
+<button>Email me a link</button></form><p class="muted">Therapist or practice manager? <a href="/staff">Use team sign-in</a></p>`);
 
 const clientSent = () => page('Check your email', `<p>If that address is registered, we've emailed a sign-in link. It expires in 15 minutes.</p>
 <p class="muted" id="s">Waiting for you to open it&hellip;</p>
@@ -30,9 +30,9 @@ const clientConfirm = token => page('Sign in', `<p>Tap to finish signing in.</p>
 
 const linkExpired = () => page('Link expired', `<p>That link has expired or has already been used.</p><p><a href="/">Request a new one</a></p>`);
 
-const staffLogin = () => page('Team sign-in', `<p>Enter your work email and we'll send a 6-digit code.</p>
+const staffLogin = () => page('Team sign-in', `<p><strong>Team sign-in</strong></p><p>Enter your work email and we'll send a 6-digit code.</p>
 <form method="post" action="/staff/request-code"><input name="email" type="email" autocomplete="email" required placeholder="Your email">
-<button>Email me a code</button></form>`);
+<button>Email me a code</button></form><p class="muted">Client? <a href="/">Use client sign-in</a></p>`);
 
 const staffVerify = (email, error) => page('Enter code', `${error ? `<p style="color:#b00020">${esc(error)}</p>` : `<p>If that address belongs to the team, we've sent a code. It expires in 10 minutes.</p>`}
 <form method="post" action="/staff/verify"><input type="hidden" name="email" value="${esc(email)}">
