@@ -491,8 +491,9 @@ test('weekly score: one per week, editable within the week, gaps shown, client a
   assert.equal((await co.get(`/therapist/client/${id}`)).status, 404);                                               // another therapist cannot see the client at all
   for (const url of ['/practice/stats', '/practice']) { const t = (await cp.get(url)).text; assert.ok(!/How they have been feeling|weekly_scores/.test(t)); }
   assert.equal((await cp.get(`/therapist/client/${id}`)).status, 403);
-  // not for people who have only had a consultation
+  // also open to people who have only had a consultation
   await add(ca, { name: 'Pre Client', email: em('prec') });
   await q(`UPDATE clinical.clients SET status='consultation', ic_at=now()+interval '3 days', programme_sessions=NULL WHERE email=$1`, [em('prec')]);
-  const cc = await clientIn(em('prec')); assert.equal((await cc.get('/journal/score')).loc, '/journal');
+  const cc = await clientIn(em('prec')); assert.equal((await cc.get('/journal/score')).status, 200);       // open from the first consultation, so nothing is hidden or redirected
+  assert.match((await ca.get(`/therapist/client/${await idOf(em('prec'))}`)).text, /How they have been feeling/);
 });

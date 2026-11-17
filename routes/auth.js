@@ -336,7 +336,7 @@ async function sessionsData(id) {
     past: appts.filter(a => a.starts_at <= new Date()).reverse().map(a => ({ when: T.when(a.starts_at) })), canAsk: c.status !== 'readonly' };
 }
 const scores = require('../lib/scores');
-const scoreOK = c => c && c.status === 'active';
+const scoreOK = c => c && c.status !== 'readonly';
 router.get('/journal/score', myClient, async (req, res) => {
   const c = await one(`SELECT c.name, c.status, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [req.session.client.id]);
   if (!scoreOK(c)) return res.redirect('/journal');

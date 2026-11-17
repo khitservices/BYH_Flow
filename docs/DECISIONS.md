@@ -273,6 +273,6 @@
 - Not yet on: the public enquiry form (no question asked there; route is known) and the therapist's add-client form. Say if you want it there.
 
 ## Weekly score built (17 Nov 2026)
-- Client menu "How I feel": one 1-10 score per week (Monday to Sunday, UK time, so the clock changes are handled), saved or changed any time within the week, last 12 weeks shown as bars with a dash for weeks not entered. Available to clients whose programme has started (not consultation-only, closed or read-only). Home card shows this week's score or asks for it.
+- Client menu "How I feel": one 1-10 score per week (Monday to Sunday, UK time, so the clock changes are handled), saved or changed any time within the week, last 12 weeks shown as bars with a dash for weeks not entered. Open to every client except read-only ones, from the first consultation on (changed after testing: it was wrongly limited to active clients, so consultation-stage clients got a redirect and no therapist card). Home card shows this week's score or asks for it.
 - Therapist client record: "How they have been feeling" card (same bars). Only the client's own therapist; another therapist gets 404, the practice manager 403, and no stat counts values.
 - Not yet: weekly reminder email carrying the score prompt (step 7), journal text entries, session history, support page, account and deletion requests, files.
