@@ -45,7 +45,7 @@ async function sendForm({ therapistId, templateId, enquiry, client, fee_pence, s
     [therapistId, enquiry ? enquiry.id : null, client ? client.id : null, tpl.id, tpl.name, tpl.audience, rendered, F.sha(rendered), to, tokenHash(token), String(DAYS)]);
   await audit(req, 'form.sent', { actorType: 'staff', actorId: therapistId, subjectType: 'form', subjectId: f.id });
   let sent = true;
-  try { await mail.sendMail(to, rendered.title, mail.formRequestEmail(signerName, me.name, `${process.env.BASE_URL}/sign/${token}`)); }
+  try { await mail.sendFrom(me.id, to, rendered.title, mail.formRequestEmail(signerName, me.name, `${process.env.BASE_URL}/sign/${token}`)); }
   catch (e) { sent = false; console.error('[forms] email failed:', e.message); }
   return { id: f.id, sent };
 }
@@ -75,7 +75,7 @@ async function seal(form, s, req) {
   if (!done) { await storage.remove(fileId).catch(() => {}); return false; }   // someone signed it a moment ago
   await audit(req, 'form.signed', { actorType: form.client_id && req.session && req.session.client ? 'client' : 'public', subjectType: 'form', subjectId: form.id });
   try { // a copy to the signer, and a plain notice (no details) to the therapist
-    await mail.sendMail(form.sent_to, form.rendered.title, mail.formSignedEmail(s.name, form.rendered.title), null, { attachments: [{ filename: `${form.rendered.title}.pdf`, content: pdf, contentType: 'application/pdf' }] });
+    await mail.sendFrom(form.therapist_id, form.sent_to, form.rendered.title, mail.formSignedEmail(s.name, form.rendered.title), null, { attachments: [{ filename: `${form.rendered.title}.pdf`, content: pdf, contentType: 'application/pdf' }] });
     const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [form.therapist_id]);
     await mail.sendMail(t.email, 'A form has been signed', mail.formSignedNoticeEmail(t.name, form.rendered.title));
   } catch (e) { console.error('[forms] signed email failed:', e.message); }

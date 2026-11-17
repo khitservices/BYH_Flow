@@ -329,9 +329,9 @@ const myClient = A.requireRole('client', '/', V.forbidden);
 const CMSG = { asked: ['Your therapist has been asked. They will be in touch to arrange it.', true], withdrawn: ['Request withdrawn.', true], gone: ['That appointment is not available to change.', false] };
 async function sessionsData(id) {
   const c = await one(`SELECT c.*, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
-  const appts = await q(`SELECT id, starts_at, status, change_requested_at, change_request_kind, change_request_reason FROM clinical.appointments WHERE client_id=$1 AND status='booked' ORDER BY starts_at`, [id]);
+  const appts = await q(`SELECT id, starts_at, status, location_name, location_address, location_kind, change_requested_at, change_request_kind, change_request_reason FROM clinical.appointments WHERE client_id=$1 AND status='booked' ORDER BY starts_at`, [id]);
   return { c, ic: c.ic_at && ['consultation', 'attended'].includes(c.status) ? { when: T.when(c.ic_at), future: c.ic_at > new Date(), asked: !!c.ic_change_requested_at, kind: c.ic_change_kind, reason: c.ic_change_reason } : null,
-    upcoming: appts.filter(a => a.starts_at > new Date()).map(a => ({ id: a.id, when: T.when(a.starts_at), asked: !!a.change_requested_at, kind: a.change_request_kind, reason: a.change_request_reason })),
+    upcoming: appts.filter(a => a.starts_at > new Date()).map(a => ({ id: a.id, when: T.when(a.starts_at), where: require('../lib/locations').label(a), asked: !!a.change_requested_at, kind: a.change_request_kind, reason: a.change_request_reason })),
     past: appts.filter(a => a.starts_at <= new Date()).reverse().map(a => ({ when: T.when(a.starts_at) })), canAsk: c.status !== 'readonly' };
 }
 router.get('/journal/sessions', myClient, async (req, res) => {

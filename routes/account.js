@@ -7,12 +7,17 @@ const A = require('../lib/auth');
 const mail = require('../lib/mail');
 const brand = require('../lib/brand');
 const { audit } = require('../lib/audit');
+const { limited } = require('../lib/ratelimit');
 const V = require('../views/pages');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 
 const MSG = {
+  sender_saved: ['Saved. Emails to your clients now come from your address.', true], sender_cleared: ['Removed. Emails to your clients come from the practice address again.', true],
+  sender_bad: ['Check your email address.', false], sender_nokey: ['The password cannot be saved yet because the server has no secrets key. The address alone can be saved.', false],
+  sender_tested: ['Test email sent to you. Check your inbox.', true], sender_failed: ['The test email could not be sent. The mail server may need your own mailbox password, or the address is not set up there.', false], sender_limited: ['Too many tests. Try again in a few minutes.', false],
+  place_saved: ['Usual place saved.', true], place_bad: ['That place is not available.', false],
   details_saved: ['Your details are saved.', true], details_fee: ['Enter the fee like 60 or 60.50.', false],
   relax_saved: ['Relaxation link saved.', true], relax_cleared: ['Relaxation link removed.', true], relax_bad: ['That does not look like a web address.', false],
   handover_bad: ['Choose a colleague to hand over to.', false], handover_none: ['Choose at least one client to hand over.', false],
@@ -25,8 +30,10 @@ router.get('/therapist/account', th, async (req, res) => {
   const mine = await q(`SELECT id, name FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed' ORDER BY lower(name)`, [me.id]);
   const colleagues = await q(`SELECT id, name FROM core.staff WHERE role='therapist' AND status='active' AND id<>$1 ORDER BY lower(name)`, [me.id]);
   const key = String(req.query.msg || ''), moved = /^moved(\d{1,4})$/.exec(key);
-  const [msg, ok] = moved ? [`${moved[1]} client${moved[1] === '1' ? '' : 's'} handed over. Each has been told by email.`, true] : (MSG[key] || []);
-  res.status(ok === false ? 400 : 200).send(V.therapistAccount(me, mine, colleagues, msg, ok));
+  const [msg, ok] = moved ? [`${moved[1]} client${moved[1] === '1' ? '' : 's'} handed over. Each has been told by email.`, true] : (key === 'sender_bad' ? [String(req.query.why || 'Check your email address.').slice(0, 200), false] : (MSG[key] || []));
+  const ms = await mail.getSettings();
+  const domain = String(ms.from_address || '').split('@')[1] || '';
+  res.status(ok === false ? 400 : 200).send(V.therapistAccount(me, mine, colleagues, msg, ok, { locs: await require('../lib/locations').active(), domain, practiceFrom: ms.from_address }));
 });
 
 router.post('/therapist/account', th, async (req, res) => {
@@ -41,6 +48,33 @@ router.post('/therapist/account', th, async (req, res) => {
     await q(`UPDATE core.staff SET qualifications=$2, address=$3, postcode=$4, phone=$5, default_fee_pence=$6 WHERE id=$1`,
       [me.id, c(b.qualifications, 200), c(b.address, 200), c(b.postcode, 20), c(b.phone, 40), raw ? Math.round(Number(raw) * 100) : null]);
     return done('details_saved');
+  }
+  if (action === 'sender') {
+    const b = req.body;
+    if (!String(b.sender_address || '').trim() && !String(b.sender_name || '').trim()) {
+      await q(`UPDATE core.staff SET sender_name=NULL, sender_address=NULL, sender_password_enc=NULL WHERE id=$1`, [me.id]);
+      await audit(req, 'account.sender_cleared', who); return done('sender_cleared');
+    }
+    const r = await mail.checkSender(b.sender_name, b.sender_address);
+    if (r.error) return res.redirect(`/therapist/account?msg=sender_bad&why=${encodeURIComponent(r.error)}`);
+    const pw = String(b.sender_password || '').slice(0, 500);
+    if (pw && !require('../lib/secretbox').configured()) return done('sender_nokey');
+    await q(`UPDATE core.staff SET sender_name=$2, sender_address=$3 WHERE id=$1`, [me.id, r.name || null, r.address]);
+    if (pw) await q(`UPDATE core.staff SET sender_password_enc=$2 WHERE id=$1`, [me.id, require('../lib/secretbox').seal(pw)]);
+    await audit(req, 'account.sender_saved', { ...who, detail: { password_changed: !!pw } });
+    return done('sender_saved');
+  }
+  if (action === 'sender_test') {
+    if (limited(`sendertest|${me.id}`, 10, 10 * 60 * 1000)) return done('sender_limited');
+    try { await mail.sendFrom(me.id, me.email, 'Test email from your own address', mail.testEmail()); await audit(req, 'account.sender_tested', who); return done('sender_tested'); }
+    catch (e) { console.error('[account] sender test failed:', e.message); return done('sender_failed'); }
+  }
+  if (action === 'place') {
+    const id = Number(req.body.location) || 0;
+    const l = id ? await one(`SELECT id FROM core.locations WHERE id=$1 AND active`, [id]) : null;
+    if (id && !l) return done('place_bad');
+    await q(`UPDATE core.staff SET default_location_id=$2 WHERE id=$1`, [me.id, l ? l.id : null]);
+    return done('place_saved');
   }
   if (action === 'relax') {
     let url = String(req.body.relax_url || '').trim().slice(0, 500);

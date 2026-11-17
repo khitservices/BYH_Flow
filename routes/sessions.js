@@ -17,7 +17,9 @@ const V = require('../views/pages');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
+const locations = require('../lib/locations');
 const feedHash = token => crypto.createHmac('sha256', process.env.SESSION_SECRET || '').update('calfeed:' + token).digest('hex');
+const locsFor = async req => ({ list: await locations.active(), def: req.session.staff.default_location_id });
 const ownClient = (req, id) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(id) || 0, req.session.staff.id]);
 const ownAppt = (req, id) => one(`SELECT a.*, c.name AS client_name, c.email AS client_email, c.status AS client_status
   FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id WHERE a.id=$1 AND c.therapist_id=$2`, [Number(id) || 0, req.session.staff.id]);
@@ -33,11 +35,11 @@ async function notify(appt, client, kind) {
     const content = ics.calendar(cancel ? 'CANCEL' : 'REQUEST', [ics.vevent(appt, {
       title: `${brand.BRAND.practiceName} appointment`, cancelled: cancel,
       organizer: m.from_address ? { name: m.from_name || brand.BRAND.practiceName, email: m.from_address } : null,
-      attendee: { name: client.name, email: client.email },
+      attendee: { name: client.name, email: client.email }, location: locations.label(appt),
     })]);
     const whenText = T.when(appt.starts_at);
-    await mail.sendMail(client.email, cancel ? 'Appointment cancelled' : (kind === 'moved' ? 'Your appointment has moved' : 'Your appointment'),
-      cancel ? mail.apptCancelledEmail(client.name, whenText) : mail.apptBookedEmail(client.name, whenText, kind === 'moved'),
+    await mail.sendFrom(client.therapist_id, client.email, cancel ? 'Appointment cancelled' : (kind === 'moved' ? 'Your appointment has moved' : 'Your appointment'),
+      cancel ? mail.apptCancelledEmail(client.name, whenText) : mail.apptBookedEmail(client.name, whenText, kind === 'moved', locations.label(appt), appt.location_note),
       null, { icalEvent: { method: cancel ? 'CANCEL' : 'REQUEST', content } });
     return true;
   } catch (e) { console.error('[sessions] email failed:', e.message); return false; }
@@ -47,7 +49,8 @@ async function book(req, client, date, time) {
   const at = T.fromLocal(date, time);
   if (!at) return { error: 'date' };
   if (client.status !== 'active') return { error: 'inactive' };
-  const [a] = await q(`INSERT INTO clinical.appointments (client_id, starts_at, block_id) VALUES ($1,$2,(SELECT current_block_id FROM clinical.clients WHERE id=$1)) RETURNING *`, [client.id, at]);
+  const [a] = await q(`INSERT INTO clinical.appointments (client_id, starts_at, block_id, location_id, location_name, location_address, location_note, location_kind)
+    VALUES ($1,$2,(SELECT current_block_id FROM clinical.clients WHERE id=$1),$3,$4,$5,$6,$7) RETURNING *`, [client.id, at, ...locations.snapshot(await locations.pick(client.therapist_id, req.body && req.body.location))]);
   await audit(req, 'session.booked', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'client', subjectId: client.id });
   const future = at > new Date();
   return { appt: a, msg: !future ? 'recorded' : ((await notify(a, client, 'booked')) ? 'booked' : 'booked_nomail') };
@@ -70,7 +73,7 @@ router.get('/therapist/client/:id/sessions', th, async (req, res) => {
   if (!c) return res.status(404).send(V.forbidden());
   const appts = await q(`SELECT * FROM clinical.appointments WHERE client_id=$1 ORDER BY starts_at`, [c.id]);
   const [msg, ok] = flash(req);
-  res.status(ok === false ? 400 : 200).send(V.clientSessions(c, appts, msg, ok));
+  res.status(ok === false ? 400 : 200).send(V.clientSessions(c, appts, msg, ok, await locsFor(req)));
 });
 
 router.post('/therapist/client/:id/sessions', th, async (req, res) => {
@@ -84,7 +87,7 @@ router.post('/therapist/client/:id/sessions', th, async (req, res) => {
 router.get('/therapist/book', th, async (req, res) => {
   const active = await q(`SELECT id, name FROM clinical.clients WHERE therapist_id=$1 AND status='active' ORDER BY lower(name)`, [req.session.staff.id]);
   const [msg, ok] = flash(req);
-  res.status(ok === false ? 400 : 200).send(V.book(active, msg, ok));
+  res.status(ok === false ? 400 : 200).send(V.book(active, msg, ok, await locsFor(req)));
 });
 
 router.post('/therapist/book', th, async (req, res) => {
@@ -106,8 +109,10 @@ router.post('/therapist/session/:id', th, async (req, res) => {
   if (action === 'reschedule') {
     const at = T.fromLocal(req.body.date, req.body.time);
     if (!at) return back('date');
+    const loc = req.body.location && req.body.location !== 'keep' ? await locations.pick(client.therapist_id, req.body.location) : undefined;
     const [moved] = await q(`UPDATE clinical.appointments SET starts_at=$2, status='booked', cancelled_at=NULL, ics_sequence=ics_sequence+1,
-        change_requested_at=NULL, change_request_kind=NULL, change_request_reason=NULL WHERE id=$1 RETURNING *`, [a.id, at]);
+        change_requested_at=NULL, change_request_kind=NULL, change_request_reason=NULL${loc === undefined ? '' : ', location_id=$3, location_name=$4, location_address=$5, location_note=$6, location_kind=$7'} WHERE id=$1 RETURNING *`,
+      loc === undefined ? [a.id, at] : [a.id, at, ...locations.snapshot(loc)]);
     await log('session.moved');
     return back(at <= new Date() ? 'recorded' : ((await notify(moved, client, 'moved')) ? 'moved' : 'moved_nomail'));
   }
@@ -133,7 +138,7 @@ router.get('/therapist/schedule', th, async (req, res) => {
     WHERE c.therapist_id=$1 AND c.status <> 'closed' AND a.status='booked' AND a.starts_at > now() - interval '2 hours'
       AND a.starts_at < now() + interval '60 days' ORDER BY a.starts_at`, [req.session.staff.id]);
   const [msg, ok] = flash(req);
-  res.status(ok === false ? 400 : 200).send(V.schedule(rows, { hasFeed: !!req.session.staff.cal_feed_hash }, msg, ok));
+  res.status(ok === false ? 400 : 200).send(V.schedule(rows, { hasFeed: !!req.session.staff.cal_feed_hash }, msg, ok, await locsFor(req)));
 });
 
 // Create (or replace) the private calendar link. The link is shown once, here; only its hash is stored.

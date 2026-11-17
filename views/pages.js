@@ -15,7 +15,7 @@ const MENUS = {
   practice_manager: [
     { label: 'Overview', href: '/practice', exact: true },
     { group: 'Practice' }, { label: 'Team', href: '/practice/team' }, { label: 'Statistics', href: '/practice/stats' },
-    { group: 'Set-up' }, { label: 'Programmes', href: '/practice/programmes' }, { label: 'Forms', href: '/practice/forms' },
+    { group: 'Set-up' }, { label: 'Programmes', href: '/practice/programmes' }, { label: 'Locations', href: '/practice/locations' }, { label: 'Forms', href: '/practice/forms' },
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
@@ -295,9 +295,12 @@ ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording fr
 }
 const whenFields = (id, at) => `<label for="d${id}">Date</label><input id="d${id}" name="date" type="date" required value="${at ? T.inputDate(at) : ''}">
 <label for="t${id}">Time</label><input id="t${id}" name="time" type="time" required value="${at ? T.timeShort(at) : '14:00'}">`;
-const sessionActions = (a, ret) => `<details><summary>Change</summary>
+// Place field for a session. mode 'book': defaults to the therapist's usual place. mode 'change': keeps the current one unless changed.
+const locField = (id, locs, mode, current) => (!locs || !locs.list || !locs.list.length ? '' : `<label for="loc${id}">Where</label><select id="loc${id}" name="location" ${sel}>${mode === 'change' ? '<option value="keep">Keep as it is</option>' : '<option value="none">No place shown</option>'}${locs.list.map(l => `<option value="${l.id}"${mode === 'book' && String(locs.def) === String(l.id) ? ' selected' : ''}>${esc(l.name)}${l.address ? `, ${esc(l.address)}` : ''}</option>`).join('')}</select>`);
+const whereText = a => (a.location_name ? (a.location_kind === 'online' || !a.location_address ? a.location_name : `${a.location_name}, ${a.location_address}`) : '');
+const sessionActions = (a, ret, locs) => `<details><summary>Change</summary>
 <form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="reschedule"><input type="hidden" name="return" value="${ret}">
-${whenFields(a.id, a.starts_at)}<button class="alt">Move to this date and time</button></form>
+${whenFields(a.id, a.starts_at)}${locField('s' + a.id, locs, 'change')}<button class="alt">Move or change place</button></form>
 ${a.status === 'booked' ? `<form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="return" value="${ret}"><button class="alt">Cancel session (kept on record)</button></form>` : ''}
 <form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="remove"><input type="hidden" name="return" value="${ret}"><button style="background:#b00020">Remove (entered by mistake)</button></form>
 <p style="margin:6px 0 0"><a href="/therapist/session/${a.id}/calendar.ics">Download for my calendar</a></p></details>`;
@@ -313,35 +316,35 @@ function clientSessionsPage(d, msg, ok) {
 <p class="muted">Your therapist will contact you to arrange it. Nothing changes until they do.</p></details>` : '';
   return wide('My sessions', `<p><strong>My sessions</strong></p><p class="muted">With ${esc(d.c.therapist)}.</p>${note(msg, ok)}
 ${d.ic ? `<section class="card" style="margin:12px 0"><h2>Initial consultation</h2><p><strong>${esc(d.ic.when)}</strong></p>${d.ic.future ? ask('ic', d.ic) : ''}</section>` : ''}
-<section class="card" style="margin:12px 0"><h2>Coming up</h2>${d.upcoming.length ? d.upcoming.map(a => `<div style="border-top:1px solid #eee;padding:8px 0"><strong>${esc(a.when)}</strong>${ask(a.id, a)}</div>`).join('') : '<p class="muted">Nothing booked yet. Your therapist will arrange your next session.</p>'}</section>
+<section class="card" style="margin:12px 0"><h2>Coming up</h2>${d.upcoming.length ? d.upcoming.map(a => `<div style="border-top:1px solid #eee;padding:8px 0"><strong>${esc(a.when)}</strong>${a.where ? `<br><span class="muted">${esc(a.where)}</span>` : ''}${ask(a.id, a)}</div>`).join('') : '<p class="muted">Nothing booked yet. Your therapist will arrange your next session.</p>'}</section>
 ${d.past.length ? `<section class="card" style="margin:12px 0"><h2>Past sessions</h2>${d.past.map(a => `<p class="muted">${esc(a.when)}</p>`).join('')}</section>` : ''}`);
 }
 
-function clientSessions(c, appts, msg, ok) {
+function clientSessions(c, appts, msg, ok, locs) {
   const now = Date.now();
-  const line = a => `<div style="border-top:1px solid #eee;padding:10px 0"><p style="margin:0">${esc(T.when(a.starts_at))}${a.status === 'cancelled' ? ' <span class="muted">(cancelled)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'client')}</div>`;
+  const line = a => `<div style="border-top:1px solid #eee;padding:10px 0"><p style="margin:0">${esc(T.when(a.starts_at))}${a.status === 'cancelled' ? ' <span class="muted">(cancelled)</span>' : ''}${whereText(a) ? `<br><span class="muted">${esc(whereText(a))}</span>` : ''}${changeAsk(a)}</p>${sessionActions(a, 'client', locs)}</div>`;
   const up = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) > now), past = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) <= now).reverse(), gone = appts.filter(a => a.status === 'cancelled').reverse();
   const block = (title, list, empty) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${list.length ? list.map(line).join('') : `<p class="muted" style="margin:0">${empty}</p>`}</section>`;
   return wide(`Sessions: ${c.name}`, `<p><strong>Sessions: ${esc(c.name)}</strong></p>${note(msg, ok)}
 ${block('Coming up', up, 'Nothing booked.')}
 ${c.status === 'active' ? `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Book a session</strong></p>
-<form method="post" action="/therapist/client/${c.id}/sessions">${whenFields('new')}<button>Book</button></form>
+<form method="post" action="/therapist/client/${c.id}/sessions">${whenFields('new')}${locField('new', locs, 'book')}<button>Book</button></form>
 <p class="muted">A date in the past records a session that has already happened and sends no email.</p></section>` : '<p class="muted">This record is not active, so new sessions cannot be booked.</p>'}
 ${block('Past', past, 'None yet.')}${gone.length ? block('Cancelled', gone, '') : ''}
 <p><a href="/therapist/client/${c.id}">Back to ${esc(c.name)}</a></p>`);
 }
 
-function book(active, msg, ok) {
+function book(active, msg, ok, locs) {
   return read('Book a session', `<p><strong>Book a session</strong></p>${note(msg, ok)}
 ${active.length ? `<form method="post" action="/therapist/book"><label for="cl">Client</label><select id="cl" name="client_id" required ${sel}><option value="">Choose a client</option>${opts(active.map(c => [c.id, c.name]))}</select>
-${whenFields('b')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}
+${whenFields('b')}${locField('b', locs, 'book')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}
 <p><a href="/therapist">Back</a></p>`);
 }
 
-function schedule(rows, feed, msg, ok) {
+function schedule(rows, feed, msg, ok, locs) {
   let lastDay = '';
   const line = a => { const d = T.dateLong(a.starts_at); const head = d !== lastDay ? `<p style="margin:14px 0 4px"><strong>${esc(d)}</strong></p>` : ''; lastDay = d;
-    return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule')}</div>`; };
+    return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${whereText(a) ? `<br><span class="muted">${esc(whereText(a))}</span>` : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule', locs)}</div>`; };
   return wide('Schedule', `<p><strong>Schedule</strong> <span class="muted">next 60 days</span></p>${note(msg, ok)}
 ${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}
 <section style="border-top:1px solid #ddd;padding:12px 0;margin-top:14px"><p style="margin:0 0 6px"><strong>See this in your own calendar</strong></p>
@@ -357,7 +360,7 @@ const feedLink = url => read('Your calendar link', `<p><strong>Your calendar lin
 <p class="muted">In your calendar app choose "add calendar from the internet" or "subscribe", and paste it. Treat it like a password: anyone with the link can see your session times.</p>
 <p><a href="/therapist/schedule">Back to schedule</a></p>`);
 
-function therapistAccount(me, mine, colleagues, msg, ok) {
+function therapistAccount(me, mine, colleagues, msg, ok, x = {}) {
   const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
   const post = (action, inner) => `<form method="post" action="/therapist/account"><input type="hidden" name="action" value="${action}">${inner}</form>`;
   return wide('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
@@ -368,6 +371,14 @@ ${post('details', `<label for="dq">Qualifications</label><input id="dq" name="qu
 <label for="dh">Phone</label><input id="dh" name="phone" maxlength="40" value="${esc(me.phone)}">
 <label for="df">Usual fee per session in pounds</label><input id="df" name="default_fee" inputmode="decimal" value="${me.default_fee_pence == null ? '' : (me.default_fee_pence / 100).toFixed(2).replace(/\.00$/, '')}">
 <button class="alt">Save my details</button>`)}`)}
+${sec('My email address', `<p class="muted" style="margin:0">Emails to your clients (consultation and session bookings, forms, invitations) are sent from this address and replies come to you. It must be at the practice's own domain${x.domain ? ` (@${esc(x.domain)})` : ''}, because it goes through the practice's mail server. Leave blank to send from the practice address${x.practiceFrom ? ` (${esc(x.practiceFrom)})` : ''}.</p>
+${post('sender', `<label for="sn">Name shown to clients</label><input id="sn" name="sender_name" maxlength="100" placeholder="${esc(me.name)}" value="${esc(me.sender_name)}">
+<label for="sa">Your email address</label><input id="sa" name="sender_address" type="email" maxlength="254" value="${esc(me.sender_address)}">
+<label for="sp">Mailbox password (only if sending as the practice login is not enough)</label><input id="sp" name="sender_password" type="password" autocomplete="new-password" placeholder="${me.sender_password_enc ? 'A password is saved. Leave blank to keep it.' : 'Optional'}">
+<button class="alt">Save my email address</button>`)}
+${me.sender_address ? post('sender_test', '<button class="alt">Send myself a test email</button>') : ''}`)}
+${sec('Usual place for sessions', `<p class="muted" style="margin:0">Where your sessions normally happen. Set when you book each session, and you can pick another place when it differs. The practice manager keeps the list.</p>
+${post('place', `<label for="pl">Usual place</label><select id="pl" name="location" ${sel}><option value="">None (no place shown)</option>${(x.locs || []).map(l => `<option value="${l.id}"${String(me.default_location_id) === String(l.id) ? ' selected' : ''}>${esc(l.name)}${l.address ? `, ${esc(l.address)}` : ''}</option>`).join('')}</select><button class="alt">Save usual place</button>`)}`)}
 ${sec('Relaxation link', `<p class="muted" style="margin:0">A recording or page you want your clients to be able to open from their client area. Leave blank for none.</p>
 ${post('relax', `<label for="rx">Web address</label><input id="rx" name="relax_url" inputmode="url" placeholder="https://" value="${esc(me.relax_url)}"><button class="alt">Save link</button>`)}`)}
 ${sec('Hand clients over to a colleague', !mine.length ? '<p class="muted" style="margin:0">You have no clients to hand over.</p>'
@@ -548,6 +559,21 @@ function enquiryManual(f = {}, msg) {
 <button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
 }
 
+function locationsPage(rows, msg, ok) {
+  const form = l => `<form method="post" action="/practice/locations">${l ? `<input type="hidden" name="id" value="${l.id}">` : ''}
+<label for="ln${l ? l.id : 'n'}">Name</label><input id="ln${l ? l.id : 'n'}" name="name" required maxlength="100" placeholder="For example: Smith Osteopaths" value="${esc(l && l.name)}">
+<label for="lk${l ? l.id : 'n'}">Kind</label><select id="lk${l ? l.id : 'n'}" name="kind" ${sel}><option value="inperson"${!l || l.kind === 'inperson' ? ' selected' : ''}>In person (has an address)</option><option value="online"${l && l.kind === 'online' ? ' selected' : ''}>Online (no address)</option></select>
+<label for="la${l ? l.id : 'n'}">Address (in person)</label><input id="la${l ? l.id : 'n'}" name="address" maxlength="300" value="${esc(l && l.address)}">
+<label for="lt${l ? l.id : 'n'}">Note for clients (optional)</label><input id="lt${l ? l.id : 'n'}" name="note" maxlength="300" placeholder="For example: ring the side doorbell" value="${esc(l && l.note)}">
+<button class="${l ? 'alt' : ''}">${l ? 'Save changes' : 'Add this place'}</button></form>`;
+  return wide('Locations', `<p style="margin:0 0 4px"><strong style="font-size:22px">Locations</strong></p><p class="muted" style="margin:0">Where sessions take place. A therapist chooses their usual place in My account, and can pick another when booking a session. Clients see the place in their booking email, calendar file and My sessions page.</p>${note(msg, ok)}
+<div class="grid">${rows.map(l => `<section class="card"><h2>${esc(l.name)} <span class="pill ${l.active ? '' : 'off'}">${l.kind === 'online' ? 'Online' : 'In person'}${l.active ? '' : ', not offered'}</span></h2>
+<p class="muted">${l.address ? esc(l.address) : 'No address'}${l.note ? `<br>${esc(l.note)}` : ''}<br>${l.used_by ? `Usual place for ${l.used_by} therapist${l.used_by === 1 ? '' : 's'}` : 'Not anyone\'s usual place'}</p>
+<details><summary>Change</summary>${form(l)}</details>
+<form method="post" action="/practice/locations"><input type="hidden" name="id" value="${l.id}"><input type="hidden" name="action" value="${l.active ? 'retire' : 'restore'}"><button class="alt">${l.active ? 'Stop offering' : 'Offer again'}</button></form></section>`).join('')}
+<section class="card"><h2>Add a place</h2>${form(null)}</section></div>`);
+}
+
 function programmes(rows, msg, ok) {
   const card = p => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0"><strong>${esc(p.name)}</strong>${p.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${p.sessions} session${p.sessions === 1 ? '' : 's'}${p.price_pence != null ? ` · ${money(p.price_pence)}` : ' · no price set'}</span></p>
 <details><summary>Change</summary><form method="post" action="/practice/programmes/${p.id}">
@@ -624,4 +650,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

@@ -56,6 +56,7 @@ app.use(require('./routes/sessions').router);
 app.use(require('./routes/programmes').router);
 app.use(require('./routes/forms').router);
 app.use(require('./routes/enquiries').router);
+app.use(require('./routes/locations').router);
 app.use(require('./routes/therapist'));
 app.use(require('./routes/account'));
 

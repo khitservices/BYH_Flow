@@ -40,8 +40,8 @@ function client(ip) {
 }
 const addStaff = (n, role) => q(`INSERT INTO core.staff (name,email,role) VALUES ($1,$2,$3) RETURNING *`, [n, em(n), role]).then(r => r[0]);
 const last = (to, re) => [...mail.outbox].reverse().find(x => x.to === to && re.test(x.subject));
-async function staffIn(email) {
-  const c = client(); await c.post('/staff/request-code', { email });
+async function staffIn(email, ip) {
+  const c = client(ip); await c.post('/staff/request-code', { email });
   await c.post('/staff/verify', { email, code: last(email, /sign-in code/).html.match(/>(\d{6})</)[1] });
   return c;
 }
@@ -395,4 +395,51 @@ test('sign-in pages say who they are for; the colour takes a hex code; a logo ca
   assert.equal((await client().post('/practice/settings/logo', {})).status, 302);                                                   // signed out cannot change it
   await cp.post('/practice/settings/logo', { action: 'remove' });
   assert.equal((await fetch(`${base}/brand/logo`)).status, 404);
+});
+
+test('therapist sends from their own address; locations are kept by the manager and used for session bookings only', { skip }, async () => {
+  const t = await addStaff('Thera Own', 'therapist'), t2 = await addStaff('Thera Plain', 'therapist'), p = await addStaff('Mgr Loc', 'practice_manager');
+  const ct = await staffIn(t.email, '10.77.1.1'), ct2 = await staffIn(t2.email, '10.77.1.2'), cp = await staffIn(p.email, '10.77.1.3');
+  await q(`UPDATE core.mail_settings SET from_address='practice@betteryou.example'`);
+  // own address: must be on the practice's domain; optional password never echoed
+  assert.match((await ct.post('/therapist/account', { action: 'sender', sender_name: 'Kat', sender_address: 'kat@elsewhere.example' })).loc, /sender_bad/);
+  assert.match((await ct.post('/therapist/account', { action: 'sender', sender_name: 'Kat B', sender_address: 'Kat@betteryou.example', sender_password: 'hunter2-secret' })).loc, /sender_saved/);
+  const row = (await q(`SELECT sender_name, sender_address, sender_password_enc FROM core.staff WHERE id=$1`, [t.id]))[0];
+  assert.equal(row.sender_address, 'kat@betteryou.example'); assert.ok(row.sender_password_enc && !row.sender_password_enc.includes('hunter2'));
+  const acct = (await ct.get('/therapist/account')).text; assert.ok(!acct.includes('hunter2')); assert.match(acct, /value="kat@betteryou.example"/);
+  let n = mail.outbox.length;
+  await ct.post('/therapist/account', { action: 'sender_test' });
+  assert.equal(mail.outbox.slice(n).find(x => x.to === t.email).from, 'kat@betteryou.example');
+  // a booking for her client comes from her address; another therapist's comes from the practice address
+  const a1 = await add(ct, { name: 'Own Client', email: em('ownc') }); const a2 = await add(ct2, { name: 'Plain Client', email: em('plainc') });;
+  const oc = await idOf(em('ownc')), pc = await idOf(em('plainc'));
+  // locations: manager adds; therapist, not manager, cannot; in-person needs an address
+  assert.equal((await ct.get('/practice/locations')).status, 403);
+  assert.match((await cp.get('/practice/locations')).text, /Online \(video call\)/);
+  assert.equal((await cp.post('/practice/locations', { name: 'Smith Osteopaths', kind: 'inperson', address: '' })).status, 400);
+  assert.equal((await cp.post('/practice/locations', { name: 'Smith Osteopaths ' + run, kind: 'inperson', address: '12 High St, Braintree', note: 'Ring the side bell' })).loc, '/practice/locations?msg=saved');
+  const loc = (await q(`SELECT * FROM core.locations WHERE name=$1`, ['Smith Osteopaths ' + run]))[0];
+  const online = (await q(`SELECT * FROM core.locations WHERE kind='online'`))[0];
+  await ct.post('/therapist/account', { action: 'place', location: String(online.id) });
+  assert.match((await ct.get('/therapist/book')).text, new RegExp(`value="${online.id}" selected`));       // her usual place is the default
+  n = mail.outbox.length;
+  await ct.post('/therapist/book', { client_id: oc, date: '2027-08-02', time: '10:00' });                     // usual place
+  await ct.post('/therapist/book', { client_id: oc, date: '2027-08-09', time: '10:00', location: String(loc.id) });   // this one differs
+  const mails = mail.outbox.slice(n).filter(x => x.to === em('ownc'));
+  assert.equal(mails.length, 2); assert.ok(mails.every(m => m.from === 'kat@betteryou.example'));
+  assert.match(mails[0].html, /Online \(video call\)/); assert.match(mails[1].html, /Smith Osteopaths[^<]*, 12 High St, Braintree/); assert.match(mails[1].html, /Ring the side bell/);
+  assert.match(mails[1].icalEvent.content, /LOCATION:Smith Osteopaths/);
+  n = mail.outbox.length; await ct2.post('/therapist/book', { client_id: pc, date: '2027-08-03', time: '10:00' });
+  const plain = mail.outbox.slice(n).find(x => x.to === em('plainc')); assert.equal(plain.from, null); assert.ok(!/Where:/.test(plain.html));   // no place set, practice sender
+  // a session keeps the place it was booked with even if the location is later edited; the client sees it
+  await cp.post('/practice/locations', { id: String(loc.id), name: 'Smith Osteopaths ' + run, kind: 'inperson', address: 'Moved Road' });
+  const cl = await clientIn(em('ownc')); const mine = (await cl.get('/journal/sessions')).text; assert.match(mine, /12 High St, Braintree/); assert.ok(!mine.includes('Moved Road'));
+  assert.match((await ct.get(`/therapist/client/${oc}/sessions`)).text, /Smith Osteopaths/);
+  // retiring a place stops it being offered and clears it as anyone's usual place
+  await cp.post('/practice/locations', { id: String(online.id), action: 'retire' });
+  assert.equal((await q(`SELECT default_location_id FROM core.staff WHERE id=$1`, [t.id]))[0].default_location_id, null);
+  await cp.post('/practice/locations', { id: String(online.id), action: 'restore' });
+  assert.match((await ct.post('/therapist/account', { action: 'sender', sender_name: '', sender_address: '' })).loc, /sender_cleared/);
+  assert.equal((await q(`SELECT sender_password_enc FROM core.staff WHERE id=$1`, [t.id]))[0].sender_password_enc, null);
+  await q(`UPDATE core.mail_settings SET from_address=NULL`);
 });
