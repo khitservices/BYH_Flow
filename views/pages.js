@@ -19,7 +19,7 @@ const MENUS = {
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
-    { label: 'Home', href: '/journal', exact: true }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' },
+    { label: 'Home', href: '/journal', exact: true }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' }, { label: 'My account', href: '/journal/account' }, { label: 'Help', href: '/journal/help' },
   ],
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
@@ -223,6 +223,7 @@ ${c.consent_status === 'granted' ? `Consent given in person on ${day(c.consent_a
 ${sec('Forms', `${formsBlock(c.forms || [], 'therapist') || '<p class="muted" style="margin:0">No forms sent yet.</p>'}${closed || !(c.templates || []).length ? '' : `<details><summary>Send a form</summary>${post('send_form', `${templateSelect('c', c.templates)}${feeInput('c', c.fee_pence)}${formatSelect('c')}<button>Send for signing</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} The signed copy is kept here.</p></details>`}`)}
 ${closed || pre ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
+${(c.data_requests || []).length ? sec('Requests about their information', c.data_requests.map(r => `<p style="margin:0 0 6px"><strong>${r.kind === 'copy' ? 'Asked for a copy of their information' : 'Asked for their information to be deleted'}</strong> <span class="muted">${esc(r.when)}</span>${r.note ? `<br>${esc(r.note)}` : ''}</p>${post('data_done', `<input type="hidden" name="id" value="${r.id}"><label for="dn${r.id}">Note of what you did (optional)</label><input id="dn${r.id}" name="note" maxlength="300"><button class="alt">Mark as dealt with</button>`)}`).join('') + '<p class="muted" style="margin:6px 0 0">Reply to them yourself. Some clinical records may have to be kept for a period, so check before deleting anything.</p>') : ''}
 ${sec('How they have been feeling', `${c.scores && c.scores.some(s => s.score) ? scoreBars(c.scores) : '<p class="muted">No weekly scores entered yet.</p>'}${(c.scores || []).some(s => s.note) ? noteList(c.scores, 'They wrote').replace('<section class="card"><h2>Notes</h2>', '<h3 style="margin:12px 0 6px;font-size:15px">Their notes</h3>').replace(/<\/section>$/, '') : ''}<p class="muted" style="margin:6px 0 0">Their own 1 to 10 each week, last 12 weeks. Only you can see this, not the practice manager.</p>`)}
 ${pre || c.archived_at ? '' : sec('Blocks of sessions', `${(c.blocks || []).map(b => `<p style="margin:0 0 6px"><strong>Block ${b.number}${b.name ? `: ${esc(b.name)}` : ''}</strong> ${b.id === c.current_block_id && c.status !== 'closed' ? '<span class="muted">(current)</span>' : ''}<br><span class="muted">${b.sessions} session${b.sessions === 1 ? '' : 's'}${b.price_pence != null ? ` · ${money(b.price_pence)}` : ''} · ${b.held + b.sessions_before_app} of ${b.sessions} had · started ${day(b.started_at)}${b.ended_at ? `, ended ${day(b.ended_at)}` : ''}</span></p>`).join('')}
 <details><summary>Start a further block or a single session</summary>${post('new_block', `<label for="nb">Programme</label><select id="nb" name="programme" ${sel}>${programmeOpts(c.programmes || [], '')}</select>
@@ -320,6 +321,25 @@ ${a.status === 'booked' ? `<form method="post" action="/therapist/session/${a.id
 <form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="remove"><input type="hidden" name="return" value="${ret}"><button style="background:#b00020">Remove (entered by mistake)</button></form>
 <p style="margin:6px 0 0"><a href="/therapist/session/${a.id}/calendar.ics">Download for my calendar</a></p></details>`;
 const changeAsk = a => (a.change_requested_at ? `<br><strong style="color:#8a4a00">Client asked to ${a.change_request_kind === 'cancel' ? 'cancel' : 'move'} this${a.change_request_reason ? `: ${esc(a.change_request_reason)}` : ''}</strong>` : '');
+
+function clientAccountPage(d, msg, ok) {
+  const open = k => (d.requests || []).some(r => r.kind === k && !r.done);
+  const ask = (kind, label, text) => open(kind) ? `<p><strong>Requested.</strong> <span class="muted">${esc(d.therapist)} has your request.</span></p>`
+    : `<form method="post" action="/journal/account"><input type="hidden" name="kind" value="${kind}"><p class="muted" style="margin:0">${text}</p><label for="n${kind}">Anything you would like to add (optional)</label><input id="n${kind}" name="note" maxlength="500"><button class="alt">${label}</button></form>`;
+  return page('My account', `<p style="margin:0 0 4px"><strong style="font-size:22px">My account</strong></p><p class="muted" style="margin:0">Your details and your information.</p>${note(msg, ok)}
+<div class="grid"><section class="card"><h2>Your details</h2><p><strong>${esc(d.name)}</strong><br>${esc(d.under16 ? (d.guardian_email || d.email) : d.email)}</p><p class="muted">Your therapist is ${esc(d.therapist)}. To change your details, ask your therapist.</p><div class="links"><a href="/logout">Sign out</a></div></section>
+<section class="card"><h2>A copy of my information</h2>${ask('copy', 'Ask for a copy', `You can ask ${esc(d.therapist)} for a copy of the information held about you.`)}</section>
+<section class="card"><h2>Delete my information</h2>${ask('delete', 'Ask for my information to be deleted', `You can ask ${esc(d.therapist)} to delete your information. Some records may have to be kept for a period. Your therapist will explain what can be deleted.`)}</section></div>
+${(d.requests || []).length ? `<section class="card"><h2>Your requests</h2>${d.requests.map(r => `<p style="margin:0 0 4px">${r.kind === 'copy' ? 'Copy of my information' : 'Deletion of my information'} <span class="muted">${esc(r.when)} · ${r.done ? 'dealt with' : 'with your therapist'}</span></p>`).join('')}</section>` : ''}`, 'wide', { who: d.name, home: '/journal' });
+}
+function clientHelpPage(d) {
+  return page('Help', `<p style="margin:0 0 4px"><strong style="font-size:22px">Help</strong></p><p class="muted" style="margin:0">Finding your way around.</p>
+<div class="grid"><section class="card"><h2>Signing in</h2><p class="muted">There is no password. Enter your email address on the sign-in page and we email you a link each time.</p></section>
+<section class="card"><h2>Changing an appointment</h2><p class="muted">Open My sessions and use "Ask to change this". ${esc(d.therapist)} will be in touch to arrange it.</p><div class="links"><a href="/journal/sessions">My sessions</a></div></section>
+<section class="card"><h2>How I feel</h2><p class="muted">Once a week, give a score from 1 to 10. Only you and ${esc(d.therapist)} can see it.</p><div class="links"><a href="/journal/score">How I feel</a></div></section>
+${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
+<section class="card"><h2>If you need urgent help</h2><p class="muted">This page is not monitored. If you are in danger, call 999. For urgent health advice call NHS 111. If you are struggling to cope, Samaritans are available any time on 116 123.</p></section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
 
 function clientSessionsPage(d, msg, ok) {
   const ask = (target, a) => a.asked
@@ -681,4 +701,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { clientAccountPage, clientHelpPage, clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

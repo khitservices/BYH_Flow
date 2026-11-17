@@ -158,7 +158,7 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), blocks: await blocks.blocksFor(c.id), scores: await require('../lib/scores').series(c.id), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), blocks: await blocks.blocksFor(c.id), scores: await require('../lib/scores').series(c.id), data_requests: (await q(`SELECT id, kind, note, created_at FROM clinical.data_requests WHERE client_id=$1 AND handled_at IS NULL ORDER BY id`, [c.id])).map(r => ({ ...r, when: T.when(r.created_at) })), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -185,6 +185,11 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     const [n] = await q(`UPDATE clinical.clients SET ic_at=$2, ic_sequence=ic_sequence+$3, ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1 RETURNING *`, [c.id, at, moved ? 1 : 0]);
     await log('client.consultation_set');
     return done(at > new Date() && await consult.notifyConsultation(n, moved ? 'moved' : 'booked') ? 'ic_set' : 'ic_set_nomail');
+  }
+  if (action === 'data_done') {
+    await q(`UPDATE clinical.data_requests SET handled_at=now(), handled_note=$3 WHERE id=$1 AND client_id=$2 AND handled_at IS NULL`, [Number(req.body.id) || 0, c.id, String(req.body.note || '').trim().slice(0, 300) || null]);
+    await log('client.data_request_handled');
+    return done('saved');
   }
   if (action === 'dismiss_ic_request' && pre) {
     await q(`UPDATE clinical.clients SET ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1`, [c.id]);

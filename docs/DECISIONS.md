@@ -306,3 +306,10 @@
 - **Unsigned forms:** a reminder with a fresh 30-day link 3 days after sending and again after 7 days, then left to the therapist. The text the signer sees does not change.
 - **Therapist morning summary:** Monday to Friday from 07:00, only when there is something to say: appointments today, new enquiries, change requests, forms waiting, new score notes since yesterday. Counts only, no names. To the therapist's own sign-in address from the practice sender.
 - Not built: a way for clients to stop reminders themselves (the therapist switches the weekly one off on the client record); quiet hours per client; a retry queue beyond 3 tries (outbox with retries is still parked).
+
+## Client area: account, requests, help (17 Nov 2026)
+- Client menu is now Home, How I feel, My sessions, My account, Help. Already there: forms and signed-copy download, session list (upcoming and past), relaxation link.
+- **My account:** their details, sign out, and two requests: a copy of their information, or deletion of it. Each is recorded (migration 026), one open request per kind, limited to 5 a day. The therapist gets an email with no detail, sees it on the client record with the client's note, and marks it dealt with (with an optional note); it also appears in the morning summary. The manager sees nothing of it. The app does NOT delete or export anything by itself: the therapist replies and acts, because clinical records may have to be kept for a period. Wording to the client says so without promising either way.
+- **Help:** how sign-in works, how to ask to change an appointment, the weekly score, the relaxation link, and a plain urgent-help box (999, NHS 111, Samaritans 116 123). Kev to confirm the urgent-help wording suits the practice.
+- Not built: a client-facing message to the therapist (no in-app messaging), data export file, automatic erasure, and an under-16's account being handled by the guardian differently (requests currently come from whichever email signed in).
+- Parked: journal text entries. The weekly score note covers the written part for now.

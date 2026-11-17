@@ -652,3 +652,28 @@ test('reminders: weekly check-in once, appointment day-before, unsigned forms 3 
   await reminders.run(new Date('2027-03-18T09:00:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 2);                         // next weekday
   const lonely = await addStaff('Thera Quiet', 'therapist'); await reminders.run(new Date('2027-03-19T09:00:00Z')); assert.equal(mine(lonely.email, /Your day/).length, 0);   // nothing to report
 });
+
+test('client account and help pages: requests about their information reach only their therapist, once, with no detail by email', { skip }, async () => {
+  const a = await addStaff('Thera DataA', 'therapist'), o = await addStaff('Thera DataB', 'therapist'), p = await addStaff('Mgr Data', 'practice_manager');
+  const ca = await staffIn(a.email, '10.85.1.1'), co = await staffIn(o.email, '10.85.1.2'), cp = await staffIn(p.email, '10.85.1.3');
+  await add(ca, { name: 'Data Client', email: em('datac') }); const id = await idOf(em('datac'));
+  const cl = await clientIn(em('datac')); assert.ok(cl);
+  const acct = (await cl.get('/journal/account')).text; assert.match(acct, /Data Client/); assert.match(acct, /Ask for a copy/); assert.match((await cl.get('/journal')).text, /My account/);
+  assert.match((await cl.get('/journal/help')).text, /999/);
+  const n = mail.outbox.length;
+  assert.equal((await cl.post('/journal/account', { kind: 'delete', note: 'Please remove everything' })).loc, '/journal/account?msg=delete');
+  assert.equal((await cl.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=already');                // one open request per kind
+  assert.equal((await cl.post('/journal/account', { kind: 'bogus' })).loc, '/journal/account?msg=gone');
+  const note = mail.outbox.slice(n).filter(x => x.to === a.email && /request/i.test(x.subject)); assert.equal(note.length, 1);
+  assert.ok(!/Data Client|Please remove|delete/i.test(note[0].html.replace(/Sign in/g, '')));                                   // nothing personal in the email
+  const rec = (await ca.get(`/therapist/client/${id}`)).text; assert.match(rec, /Asked for their information to be deleted/); assert.match(rec, /Please remove everything/);
+  assert.ok(!(await co.get(`/therapist/client/${id}`)).text.includes('Please remove'));                                       // not another therapist's (404 page)
+  assert.ok(!(await cp.get('/practice/stats')).text.includes('Please remove'));
+  const rid = (await q(`SELECT id FROM clinical.data_requests WHERE client_id=$1`, [id]))[0].id;
+  await ca.post(`/therapist/client/${id}`, { action: 'data_done', id: String(rid), note: 'Explained what we keep' });
+  assert.ok((await q(`SELECT handled_at FROM clinical.data_requests WHERE id=$1`, [rid]))[0].handled_at);
+  assert.match((await cl.get('/journal/account')).text, /dealt with/);
+  assert.ok(!(await ca.get(`/therapist/client/${id}`)).text.includes('Asked for their information to be deleted'));          // no longer open
+  assert.equal((await cl.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=delete');                 // can ask again once dealt with
+  assert.equal((await client().get('/journal/account')).status, 302);                                                          // not signed in
+});
