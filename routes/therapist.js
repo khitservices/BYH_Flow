@@ -13,6 +13,8 @@ const T = require('../lib/time');
 const { book } = require('./sessions');
 const { activeProgrammes, pence } = require('./programmes');
 const { sendForm, activeTemplates } = require('./forms');
+const consult = require('../lib/consult');
+const archive = require('../lib/archive');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
@@ -26,7 +28,7 @@ const dow = v => (Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 
 
 // Which session the client is on: sessions had before joining, plus booked sessions already in the past,
 // plus one. A missed week does not move it on; only sessions delivered do. Never more than the programme length.
-const position = (c, held = 0) => ({ on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions });
+const position = (c, held = 0) => !c.programme_sessions ? null : ({ on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions });
 const heldCount = async id => (await one(`SELECT count(*)::int n FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at <= now()`, [id])).n;
 
 // "AND therapist_id" is the access rule: someone else's client is simply not found.
@@ -36,16 +38,19 @@ router.get('/therapist', th, async (req, res) => {
   const me = req.session.staff;
   const today = await q(`SELECT a.starts_at, c.name FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
     WHERE c.therapist_id=$1 AND a.status='booked' AND a.starts_at >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2
-      AND a.starts_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY a.starts_at`, [me.id, T.ZONE]);
+      AND a.starts_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2
+    UNION ALL SELECT c.ic_at, c.name || ' (consultation)' FROM clinical.clients c
+    WHERE c.therapist_id=$1 AND c.status IN ('consultation','attended') AND c.archived_at IS NULL AND c.ic_at >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2
+      AND c.ic_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY 1`, [me.id, T.ZONE]);
   const d = await one(`SELECT
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status='active')::int AS active,
       (SELECT count(DISTINCT c.id) FROM clinical.clients c JOIN clinical.appointments a ON a.client_id=c.id
          WHERE c.therapist_id=$1 AND c.status <> 'closed' AND a.status='booked' AND a.change_requested_at IS NOT NULL AND a.starts_at > now())::int AS wants_change,
-      (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new')::int AS enq_new,
-      (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND ic_at > now() AND stage <> 'not_proceeding')::int AS enq_consult,
+      (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new' AND archived_at IS NULL)::int AS enq_new,
+      (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status IN ('consultation','attended') AND archived_at IS NULL)::int AS consults,
       (SELECT count(*) FROM documents.forms WHERE therapist_id=$1 AND status='sent')::int AS forms_waiting`, [me.id]);
   res.send(V.therapistHome({ who: me.name, today: today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })),
-    clients: { active: d.active, wants_change: d.wants_change }, enquiries: { new: d.enq_new, consultations: d.enq_consult }, forms_waiting: d.forms_waiting }));
+    clients: { active: d.active, wants_change: d.wants_change, consultations: d.consults }, enquiries: { new: d.enq_new }, forms_waiting: d.forms_waiting }));
 });
 
 router.get('/therapist/clients', th, async (req, res) => {
@@ -53,17 +58,11 @@ router.get('/therapist/clients', th, async (req, res) => {
       (SELECT count(*)::int FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at <= now()) AS held,
       (SELECT min(a.starts_at) FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at > now()) AS next_at,
       EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.change_requested_at IS NOT NULL) AS wants_change
-    FROM clinical.clients c WHERE c.therapist_id=$1 ORDER BY (c.status='closed'), lower(c.name)`, [req.session.staff.id]);
-  res.send(V.clients(rows.map(c => ({ ...c, pos: position(c, c.held), next: c.next_at ? T.when(c.next_at) : null }))));
+    FROM clinical.clients c WHERE c.therapist_id=$1 AND c.archived_at IS NULL ORDER BY (c.status='closed'), (c.status IN ('active','readonly')), lower(c.name)`, [req.session.staff.id]);
+  res.send(V.clients(rows.map(c => ({ ...c, pos: position(c, c.held), next: c.next_at ? T.when(c.next_at) : null, ic_text: c.ic_at ? T.when(c.ic_at) : null }))));
 });
 
-async function sendInvite(client, therapist) {
-  try {
-    await mail.sendMail(client.email, `Your client area with ${brand.BRAND.practiceName}`, mail.clientInviteEmail(client.name, therapist.name, `${process.env.BASE_URL}/`));
-    await q(`UPDATE clinical.clients SET invited_at=now() WHERE id=$1`, [client.id]);
-    return true;
-  } catch (e) { console.error('[clients] invite failed:', e.message); return false; }
-}
+const sendInvite = (client, therapist) => consult.sendInvite(client, therapist.name);
 
 const withProgrammes = async f => ({ ...f, programmes: await activeProgrammes() });
 
@@ -142,7 +141,11 @@ const MSG = {
   extended: ['Programme extended.', true], reminders: ['Reminder setting changed.', true],
   readonly: ['They can still sign in and read, but not add anything.', true], closed: ['Record closed. They can no longer sign in.', true],
   resumed: ['Record reopened. Their programme carries on where it left off.', true], fresh: ['Record reopened with a new programme. The earlier one is kept separately.', true],
-  active: ['Record is active.', true], unknown: ['Unknown action.', false],
+  active: ['Record is active.', true], ic_set: ['Consultation set. They have been emailed the date and a calendar file.', true], ic_set_nomail: ['Consultation set. No email was sent (it could not be sent).', true],
+  ic_cleared: ['Consultation removed.', true], date: ['Enter a real date and time.', false], attended: ['Marked as attended. The form has been emailed for signing.', true],
+  proceeded: ['They are now an active client. Book their sessions from here.', true], nodate: ['Choose a programme first.', false], consent: ['For a client under 16, confirm that a parent or guardian has given consent.', false],
+  archived: ['Archived as did not proceed. You can restore them from the archive if they get in touch again.', true], restored: ['Restored. They are back at the consultation stage.', true],
+  unknown: ['Unknown action.', false],
 };
 
 router.get('/therapist/client/:id', th, async (req, res) => {
@@ -152,7 +155,7 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -171,6 +174,59 @@ router.post('/therapist/client/:id', th, async (req, res) => {
       return done(r.sent ? 'form_sent' : 'form_notsent');
     } catch (err) { if (err.code === 'email') return done('form_email'); if (err.code === 'template') return done('form_template'); throw err; }
   }
+  const pre = ['consultation', 'attended'].includes(c.status);
+  if (action === 'ic' && pre) {
+    const at = T.fromLocal(req.body.date, req.body.time);
+    if (!at) return done('date');
+    const moved = !!c.ic_at;
+    const [n] = await q(`UPDATE clinical.clients SET ic_at=$2, ic_sequence=ic_sequence+$3 WHERE id=$1 RETURNING *`, [c.id, at, moved ? 1 : 0]);
+    await log('client.consultation_set');
+    return done(at > new Date() && await consult.notifyConsultation(n, moved ? 'moved' : 'booked') ? 'ic_set' : 'ic_set_nomail');
+  }
+  if (action === 'clear_ic' && pre) {
+    if (c.ic_at && c.ic_at > new Date()) await consult.notifyConsultation({ ...c, ic_sequence: c.ic_sequence + 1 }, 'cancelled');
+    await q(`UPDATE clinical.clients SET ic_at=NULL, ic_sequence=ic_sequence+1 WHERE id=$1`, [c.id]);
+    await log('client.consultation_cleared'); return done('ic_cleared');
+  }
+  if (action === 'attended' && pre) {
+    const fee = pence(req.body.fee);
+    if (fee == null) return done('form_fee');
+    try {
+      const r = await sendForm({ therapistId: me.id, templateId: req.body.template, client: c, fee_pence: fee, session_format: req.body.session_format === 'online' ? 'online' : 'inperson', req });
+      await q(`UPDATE clinical.clients SET status='attended' WHERE id=$1`, [c.id]);
+      await log('client.attended', { form: r.id });
+      return done(r.sent ? 'attended' : 'form_notsent');
+    } catch (err) { if (err.code === 'email') return done('form_email'); if (err.code === 'template') return done('form_template'); throw err; }
+  }
+  if (action === 'proceed' && pre) {
+    const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [Number(req.body.programme) || 0]);
+    if (!prog) return done('nodate');
+    let consent = [c.consent_status, c.consent_at, c.consent_method, c.consent_note, c.consent_recorded_by];
+    if (c.under16) {
+      if (req.body.consent_confirmed !== 'on') return done('consent');
+      const d = req.body.consent_date ? new Date(req.body.consent_date) : new Date();
+      consent = ['granted', isNaN(d) || d > new Date() ? new Date() : d, 'in_person', text(req.body.consent_note, 500) || null, me.id];
+    }
+    let prior = Number(req.body.sessions_before_app); if (!Number.isInteger(prior) || prior < 0) prior = 0;
+    await q(`UPDATE clinical.clients SET status='active', programme_id=$2, programme_name=$3, programme_sessions=$4, programme_price_pence=$5, sessions_before_app=$6,
+      reminders_on=$7, programme_started_at=now(), consent_status=$8, consent_at=$9, consent_method=$10, consent_note=$11, consent_recorded_by=$12 WHERE id=$1`,
+      [c.id, prog.id, prog.name, prog.sessions, prog.price_pence, Math.min(prior, prog.sessions - 1), prog.sessions > 1, ...consent]);
+    if (c.under16) await log('client.consent_attested');
+    await log('client.proceeded', { programme: prog.id });
+    return done('proceeded');
+  }
+  if (action === 'did_not_proceed' && pre) {
+    if (c.ic_at && c.ic_at > new Date()) await consult.notifyConsultation({ ...c, ic_sequence: c.ic_sequence + 1 }, 'cancelled');
+    await q(`UPDATE clinical.clients SET status='closed', closed_at=now(), closed_reason='did_not_proceed', archived_at=now() WHERE id=$1`, [c.id]);
+    await endSessions();
+    await log('client.archived', { reason: 'did_not_proceed' });
+    return res.redirect('/therapist/clients');
+  }
+  if (action === 'restore' && c.archived_at) {
+    await archive.restoreClient(me.id, c.id);
+    await log('client.restored');
+    return done('restored');
+  }
   if (action === 'invite') {
     if (c.status === 'closed') return done('closed_no_invite');
     const sent = await sendInvite(c, me);
@@ -187,6 +243,7 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     await log('client.edited', { email_changed: emailChanged });
     return done('saved');
   }
+  if (['extend', 'reminders', 'readonly'].includes(action) && pre) return done('unknown');
   if (action === 'extend') {
     const add = length(req.body.add_sessions, 6);
     if (c.programme_sessions + add > 60) return done('unknown');
@@ -205,13 +262,14 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     return done('readonly');
   }
   if (action === 'close') {
-    await q(`UPDATE clinical.clients SET status='closed', closed_at=now() WHERE id=$1`, [c.id]);
+    await q(`UPDATE clinical.clients SET status='closed', closed_at=now(), closed_reason='completed' WHERE id=$1`, [c.id]);
     await endSessions();
     await log('client.status_changed', { status: 'closed' });
     return done('closed');
   }
   if (action === 'reopen') {
     const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
+    if (pre || c.archived_at) return done('unknown');
     if (c.status !== 'closed' || gapDays <= RESUME_DAYS) {
       await q(`UPDATE clinical.clients SET status='active', closed_at=NULL WHERE id=$1`, [c.id]);
       await log('client.status_changed', { status: 'active' });
@@ -226,6 +284,21 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     return done('fresh');
   }
   done('unknown');
+});
+
+router.get('/therapist/archive', th, async (req, res) => {
+  const me = req.session.staff;
+  const clients = await q(`SELECT id, name, archived_at FROM clinical.clients WHERE therapist_id=$1 AND archived_at IS NOT NULL ORDER BY archived_at DESC`, [me.id]);
+  const enquiries = await q(`SELECT id, name, archived_at, archive_reason FROM clinical.enquiries WHERE therapist_id=$1 AND archived_at IS NOT NULL ORDER BY archived_at DESC`, [me.id]);
+  const m = MSG[String(req.query.msg || '')] || [];
+  res.send(V.archivePage(clients, enquiries, m[0], m[1]));
+});
+router.post('/therapist/archive/enquiry/:id', th, async (req, res) => {
+  const e = await one(`SELECT id FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND archived_at IS NOT NULL`, [Number(req.params.id) || 0, req.session.staff.id]);
+  if (!e) return res.status(404).send(V.forbidden());
+  await archive.restoreEnquiry(req.session.staff.id, e.id);
+  await audit(req, 'enquiry.restored', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'enquiry', subjectId: e.id });
+  res.redirect('/therapist/enquiries?msg=restored');
 });
 
 module.exports = router;

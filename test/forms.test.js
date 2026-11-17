@@ -60,7 +60,9 @@ const progId = async n => ((await q(`SELECT id FROM core.programmes WHERE sessio
 const add = async (c, f) => { const { sessions = '8', ...rest } = f; return c.post('/therapist/clients/add', { name: 'Someone', programme: await progId(sessions), sessions_before_app: '0', reminder_dow: '3', ...rest }); };
 const post = (c, p, f) => c.post(p, f);
 
-const enq = async n => (await q(`SELECT * FROM clinical.enquiries WHERE name=$1`, [n]))[0];
+const icDate = () => new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+// Booking the initial consultation makes the person a client at once ("Consultation booked"); forms are sent from the client record.
+const book = async (c, f) => { await c.post('/therapist/enquiries/add', { type: 'adult', ic_date: icDate(), ic_time: '10:00', ...f }); return (await q(`SELECT * FROM clinical.clients WHERE lower(email)=$1`, [String(f.email || f.guardian_email).toLowerCase()]))[0]; };
 const tplId = async audience => (await q(`SELECT id FROM core.form_templates WHERE audience=$1 AND name LIKE 'Inspired To Change%' ORDER BY id LIMIT 1`, [audience]))[0].id;
 const linkOf = (to, since) => { const m = mail.outbox.slice(since).find(x => x.to === to && /\/sign\/[a-f0-9]{64}/.test(x.html)); return m && m.html.match(/\/sign\/([a-f0-9]{64})/)[1]; };
 const signBody = (extra = {}) => ({ signer_name: 'Alice Adult', signer_address: '1 High Street', signer_phone: '07700 900555', choice_tracker: 'yes', choice_newsletter: 'on', agree: 'on', ...extra });
@@ -70,15 +72,15 @@ test('attended → form emailed → signed in the app → stored in the client f
   const ca = await staffIn(a.email), cb = await staffIn(b.email), cp = await staffIn(p.email), anon = client();
   await post(ca, '/therapist/account', { action: 'details', qualifications: 'DipSFH', address: '52 Long Road', postcode: 'CM7 1XS', phone: '01376 000000', default_fee: '60' });
   assert.match((await ca.get('/therapist/account')).text, /value="DipSFH"/);
-  await post(ca, '/therapist/enquiries/add', { type: 'adult', first_name: 'Alice', last_name: 'Adult', email: em('alice'), phone: '07700 900555' });
-  const e = await enq('Alice Adult'), tpl = await tplId('adult');
-  assert.match((await ca.get('/therapist/enquiries')).text, /Attended: send for signing/);
+  const e = await book(ca, { first_name: 'Alice', last_name: 'Adult', email: em('alice'), phone: '07700 900555' }), tpl = await tplId('adult');
+  assert.equal(e.status, 'consultation');
+  assert.match((await ca.get(`/therapist/client/${e.id}`)).text, /Attended: send for signing/);
   // bad fee and a child template for an adult are refused
-  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: tpl, fee: 'free', session_format: 'online' })).loc, '/therapist/enquiries?msg=form_fee');
-  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: await tplId('child'), fee: '60', session_format: 'online' })).loc, '/therapist/enquiries?msg=form_template');
+  assert.equal((await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: tpl, fee: 'free', session_format: 'online' })).loc, `/therapist/client/${e.id}?msg=form_fee`);
+  assert.equal((await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: await tplId('child'), fee: '60', session_format: 'online' })).loc, `/therapist/client/${e.id}?msg=form_template`);
   const n = mail.outbox.length;
-  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: tpl, fee: '60', session_format: 'online' })).loc, '/therapist/enquiries?msg=form_sent');
-  assert.equal((await enq('Alice Adult')).stage, 'attended');
+  assert.equal((await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: tpl, fee: '60', session_format: 'online' })).loc, `/therapist/client/${e.id}?msg=attended`);
+  assert.equal((await q(`SELECT status FROM clinical.clients WHERE id=$1`, [e.id]))[0].status, 'attended');
   const token = linkOf(em('alice'), n); assert.ok(token, 'signing link emailed');
   // the signer sees the filled-in agreement, no sign-in needed
   const page = await anon.get(`/sign/${token}`);
@@ -86,12 +88,12 @@ test('attended → form emailed → signed in the app → stored in the client f
   assert.ok(!page.text.includes('{{'));
   // validation
   for (const bad of [{ agree: '' }, { choice_tracker: '' }, { signer_name: 'A' }, { signer_address: '' }]) assert.equal((await post(anon, `/sign/${token}`, signBody(bad))).status, 400);
-  assert.equal((await q(`SELECT status FROM documents.forms WHERE enquiry_id=$1`, [e.id]))[0].status, 'sent');
+  assert.equal((await q(`SELECT status FROM documents.forms WHERE client_id=$1`, [e.id]))[0].status, 'sent');
   // sign
   const n2 = mail.outbox.length;
   const done = await post(anon, `/sign/${token}`, signBody());
   assert.equal(done.status, 200); assert.match(done.text, /is signed/);
-  const f = (await q(`SELECT * FROM documents.forms WHERE enquiry_id=$1`, [e.id]))[0];
+  const f = (await q(`SELECT * FROM documents.forms WHERE client_id=$1`, [e.id]))[0];
   assert.equal(f.status, 'signed'); assert.ok(f.file_id); assert.equal(f.token_hash, null); assert.equal(f.signer.choices.tracker, 'yes'); assert.equal(f.signer.name, 'Alice Adult');
   assert.match(f.content_sha256, /^[a-f0-9]{64}$/);
   const copy = mail.outbox.slice(n2).find(x => x.to === em('alice')); assert.ok(copy.attachments[0].content.subarray(0, 5).toString() === '%PDF-');
@@ -103,11 +105,12 @@ test('attended → form emailed → signed in the app → stored in the client f
   const mine = await ca.get(`/therapist/forms/${f.id}/pdf`); assert.equal(mine.status, 200); assert.match(mine.text.slice(0, 8), /%PDF-/);
   assert.equal((await cb.get(`/therapist/forms/${f.id}/pdf`)).status, 404);
   assert.equal((await cp.get(`/therapist/forms/${f.id}/pdf`)).status, 403);
-  assert.match((await ca.get('/therapist/enquiries')).text, /Signed/);
-  // becoming a client moves the signed form into the client folder, and the client sees it in their area
-  const r = await post(ca, '/therapist/clients/add', { from_enquiry: e.id, name: 'Alice Adult', email: em('alice'), programme: await progId(8), sessions_before_app: '0', reminder_dow: '3' });
-  assert.match(r.loc, /^\/therapist\/client\/\d+/);
-  const rec = (await ca.get(r.loc.split('?')[0])).text; assert.match(rec, /Open signed copy/);
+  assert.match((await ca.get(`/therapist/client/${e.id}`)).text, /Signed/);
+  // proceeding after the consultation makes them an active client with a programme; the signed form stays in their folder
+  const r = await post(ca, `/therapist/client/${e.id}`, { action: 'proceed', programme: await progId(8), sessions_before_app: '0' });
+  assert.equal(r.loc, `/therapist/client/${e.id}?msg=proceeded`);
+  assert.equal((await q(`SELECT status, programme_sessions FROM clinical.clients WHERE id=$1`, [e.id]))[0].programme_sessions, 8);
+  const rec = (await ca.get(`/therapist/client/${e.id}`)).text; assert.match(rec, /Open signed copy/);
   const cl = await clientIn(em('alice')); assert.ok(cl);
   const home = (await cl.get('/journal')).text; assert.match(home, /<h2>Forms<\/h2>/); assert.match(home, /Open my copy/);
   const mine2 = await cl.get(`/client/forms/${f.id}/pdf`); assert.equal(mine2.status, 200);
@@ -116,28 +119,35 @@ test('attended → form emailed → signed in the app → stored in the client f
 
 test('a resent form replaces the old link; an expired link stops working', { skip }, async () => {
   const a = await addStaff('Thera Resend', 'therapist'); const ca = await staffIn(a.email), anon = client();
-  await post(ca, '/therapist/enquiries/add', { type: 'adult', first_name: 'Rita', last_name: 'Resend', email: em('rita') }); const e = await enq('Rita Resend');
-  const send = async () => { const n = mail.outbox.length; await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: await tplId('adult'), fee: '50', session_format: 'inperson' }); return linkOf(em('rita'), n); };
+  const e = await book(ca, { first_name: 'Rita', last_name: 'Resend', email: em('rita') });
+  const send = async () => { const n = mail.outbox.length; await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: await tplId('adult'), fee: '50', session_format: 'inperson' }); return linkOf(em('rita'), n); };
   const one = await send(), two = await send();
   assert.notEqual(one, two);
   assert.equal((await anon.get(`/sign/${one}`)).status, 404); assert.equal((await anon.get(`/sign/${two}`)).status, 200);
-  assert.deepEqual((await q(`SELECT status FROM documents.forms WHERE enquiry_id=$1 ORDER BY id`, [e.id])).map(r => r.status), ['void', 'sent']);
-  await q(`UPDATE documents.forms SET token_expires_at = now() - interval '1 day' WHERE enquiry_id=$1 AND status='sent'`, [e.id]);
+  assert.deepEqual((await q(`SELECT status FROM documents.forms WHERE client_id=$1 ORDER BY id`, [e.id])).map(r => r.status), ['void', 'sent']);
+  await q(`UPDATE documents.forms SET token_expires_at = now() - interval '1 day' WHERE client_id=$1 AND status='sent'`, [e.id]);
   assert.equal((await anon.get(`/sign/${two}`)).status, 404);
-  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: await tplId('adult'), fee: '50', session_format: 'inperson' })).loc, '/therapist/enquiries?msg=form_sent'); // can always send again
+  assert.equal((await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: await tplId('adult'), fee: '50', session_format: 'inperson' })).loc, `/therapist/client/${e.id}?msg=attended`); // can always send again
 });
 
 test('child forms go to the guardian; a client with no email address cannot be sent one', { skip }, async () => {
   const a = await addStaff('Thera Child', 'therapist'); const ca = await staffIn(a.email), anon = client();
-  await post(ca, '/therapist/enquiries/add', { type: 'child', first_name: 'Kit', last_name: 'Kid', guardian_name: 'Gus Guardian', relationship: 'Father', guardian_email: em('gus') }); const e = await enq('Kit Kid');
+  const e = await book(ca, { type: 'child', first_name: 'Kit', last_name: 'Kid', guardian_name: 'Gus Guardian', relationship: 'Father', guardian_email: em('gus') });
+  assert.equal(e.email, em('gus')); assert.equal(e.consent_status, 'pending');   // a child with no email of their own: the guardian's address is used to invite
   const n = mail.outbox.length;
-  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'attended', template: await tplId('child'), fee: '60', session_format: 'online' })).loc, '/therapist/enquiries?msg=form_sent');
+  assert.equal((await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: await tplId('child'), fee: '60', session_format: 'online' })).loc, `/therapist/client/${e.id}?msg=attended`);
   const token = linkOf(em('gus'), n); assert.ok(token);
   const page = (await anon.get(`/sign/${token}`)).text; assert.match(page, /Parental Consent Form/); assert.match(page, /consent for Kit Kid/); assert.match(page, /Relationship to the child/);
   assert.equal((await post(anon, `/sign/${token}`, signBody({ signer_name: 'Gus Guardian', signer_relationship: 'Father' }))).status, 200);
-  assert.equal((await q(`SELECT signer FROM documents.forms WHERE enquiry_id=$1`, [e.id]))[0].signer.relationship, 'Father');
-  await post(ca, '/therapist/enquiries/add', { type: 'adult', first_name: 'Phone', last_name: 'Only', phone: '07700 900666' }); const e2 = await enq('Phone Only');
-  assert.equal((await post(ca, `/therapist/enquiries/${e2.id}`, { action: 'attended', template: await tplId('adult'), fee: '60', session_format: 'online' })).loc, '/therapist/enquiries?msg=form_email');
+  assert.equal((await q(`SELECT signer FROM documents.forms WHERE client_id=$1`, [e.id]))[0].signer.relationship, 'Father');
+  // a phone-only enquiry cannot be booked: an email is needed to invite them
+  await post(ca, '/therapist/enquiries/add', { type: 'adult', first_name: 'Phone', last_name: 'Only', phone: '07700 900666', ic_date: icDate(), ic_time: '10:00' });
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.clients WHERE name='Phone Only'`))[0].n, 0);
+  const pe = (await q(`SELECT id FROM clinical.enquiries WHERE name='Phone Only'`))[0];
+  assert.equal((await post(ca, `/therapist/enquiries/${pe.id}`, { action: 'consult', date: icDate(), time: '10:00' })).loc, '/therapist/enquiries?msg=need_email');
+  await post(ca, `/therapist/enquiries/${pe.id}`, { action: 'contact', email: em('phoneonly') });
+  assert.equal((await post(ca, `/therapist/enquiries/${pe.id}`, { action: 'consult', date: icDate(), time: '10:00' })).loc, '/therapist/enquiries?msg=booked');
+  assert.equal((await q(`SELECT stage FROM clinical.enquiries WHERE id=$1`, [pe.id]))[0].stage, 'converted');
 });
 
 test('a client added directly can be sent a form from their record, and signs it in their client area', { skip }, async () => {
@@ -171,16 +181,16 @@ test('form templates: the manager adds and edits them, sent forms keep their wor
   const tpl = (await q(`SELECT * FROM core.form_templates WHERE name=$1`, ['Standalone consent ' + run]))[0];
   assert.match((await cp.get(`/practice/forms/${tpl.id}/preview`)).text, /My fee is £60/);
   // therapist sends the new form; later editing the template does not change what was sent
-  await post(ct, '/therapist/enquiries/add', { type: 'adult', first_name: 'Tess', last_name: 'Tpl', email: em('tess') }); const e = await enq('Tess Tpl');
+  const e = await book(ct, { first_name: 'Tess', last_name: 'Tpl', email: em('tess') });
   const n = mail.outbox.length;
-  await post(ct, `/therapist/enquiries/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' });
+  await post(ct, `/therapist/client/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' });
   const token = linkOf(em('tess'), n); assert.match((await anon.get(`/sign/${token}`)).text, /My fee is £45/);
   await post(cp, `/practice/forms/${tpl.id}`, mk({ wording: '# Fees\n\nChanged wording {{fee}}.' }));
   assert.match((await anon.get(`/sign/${token}`)).text, /My fee is £45/);
   assert.ok(!(await anon.get(`/sign/${token}`)).text.includes('Changed wording'));
   // retired templates are no longer offered, and cannot be sent
   await post(cp, `/practice/forms/${tpl.id}`, { action: 'retire' });
-  assert.equal((await post(ct, `/therapist/enquiries/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' })).loc, '/therapist/enquiries?msg=form_template');
+  assert.equal((await post(ct, `/therapist/client/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' })).loc, `/therapist/client/${e.id}?msg=form_template`);
   assert.match((await cp.get('/practice')).text, /<h2>Forms<\/h2>/);
   await q(`DELETE FROM documents.forms WHERE template_id=$1`, [tpl.id]); await q(`DELETE FROM core.form_templates WHERE id=$1`, [tpl.id]);
 });

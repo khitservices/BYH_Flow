@@ -56,5 +56,9 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-if (require.main === module) app.listen(port, () => console.log(`listening on ${port}`));
+if (require.main === module) {
+  app.listen(port, () => console.log(`listening on ${port}`));
+  const sweep = () => require('./lib/archive').archiveStale().then(n => n && console.log(`[archive] ${n} stale enquir${n === 1 ? 'y' : 'ies'} archived`)).catch(e => console.error('[archive]', e.message));
+  setTimeout(sweep, 30000); setInterval(sweep, 3600000).unref();
+}
 module.exports = app;

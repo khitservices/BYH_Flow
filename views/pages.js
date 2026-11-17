@@ -96,7 +96,7 @@ ${rows.map(card).join('')}
 }
 
 // ---- therapist account: clients (carried over from the BYH app's therapist section) ----
-const STATUS = { active: 'Active', readonly: 'Read-only', closed: 'Closed' };
+const STATUS = { consultation: 'Consultation booked', attended: 'Attended', active: 'Active', readonly: 'Read-only', closed: 'Closed' };
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const sel = 'style="font-size:16px;padding:11px;width:100%;margin:6px 0;border-radius:6px;border:1px solid #bbb;background:#fff"';
 const opts = (list, chosen) => list.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(chosen) ? ' selected' : ''}>${esc(t)}</option>`).join('');
@@ -110,11 +110,11 @@ const day = d => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', 
 
 function clients(rows) {
   const row = r => `<p style="border-top:1px solid #ddd;padding:12px 0;margin:0"><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a><br>
-<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : ` · session ${r.pos.on} of ${r.pos.of}`}${r.under16 ? ' · under 16' : ''}${r.next ? `<br>Next: ${esc(r.next)}` : ''}${r.wants_change ? '<br><strong style="color:#8a4a00">Has asked to change a session</strong>' : ''}</span></p>`;
+<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : r.pos ? ` · session ${r.pos.on} of ${r.pos.of}` : r.ic_text ? ` · ${esc(r.ic_text)}` : ' · no consultation date yet'}${r.under16 ? ' · under 16' : ''}${r.next ? `<br>Next: ${esc(r.next)}` : ''}${r.wants_change ? '<br><strong style="color:#8a4a00">Has asked to change a session</strong>' : ''}</span></p>`;
   return wide('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
 <div class="cols">${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}</div>
 <form method="get" action="/therapist/clients/add" style="border-top:1px solid #ddd;padding-top:12px"><button>Add a client</button></form>
-<p><a href="/therapist">Back</a></p>`);
+<p><a href="/therapist/archive">Archive</a> · <a href="/therapist">Back</a></p>`);
 }
 
 function clientAdd(f, msg) {
@@ -144,24 +144,30 @@ function clientAdd(f, msg) {
 function clientRecord(c, msg, ok) {
   const post = (action, inner) => `<form method="post" action="/therapist/client/${c.id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
   const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
-  const closed = c.status === 'closed';
+  const closed = c.status === 'closed', pre = c.status === 'consultation' || c.status === 'attended';
   return wide(c.name, `<p><strong>${esc(c.name)}</strong>${c.under16 ? ' <span class="muted">(under 16)</span>' : ''}<br>
-<span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}` : ` · session ${c.pos.on} of ${c.pos.of}`}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
+<span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}${c.closed_reason === 'did_not_proceed' ? ' (did not proceed)' : ''}` : c.pos ? ` · session ${c.pos.on} of ${c.pos.of}` : ''}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
 ${note(msg, ok)}
-${sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
+${c.archived_at ? sec('Archived', `<p class="muted" style="margin:0">Archived ${day(c.archived_at)}. Kept for your records.</p>${post('restore', '<button class="alt">Restore to consultation stage</button>')}`) : ''}
+${pre ? sec('Initial consultation', `<p class="muted" style="margin:0">${c.ic_text ? esc(c.ic_text) : 'No date set yet.'}</p><details ${c.ic_text ? '' : 'open'}><summary>${c.ic_text ? 'Move or remove' : 'Set the date'}</summary>${post('ic', `<label for="icd">Date</label><input id="icd" name="date" type="date" required value="${esc(c.ic_date)}"><label for="ict">Time</label><input id="ict" name="time" type="time" required value="${esc(c.ic_time)}"><button class="alt">${c.ic_text ? 'Move consultation' : 'Set consultation'}</button>`)}${c.ic_text ? post('clear_ic', '<button class="alt">Remove consultation</button>') : ''}</details>`) : sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
 ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? ` · ${esc(c.phone)}` : ''}<br>${c.invited_at ? `Invited ${day(c.invited_at)}` : 'Not yet invited'}</p>
 <details><summary>Change details</summary>${post('edit', `<label for="name">Name</label><input id="name" name="name" required value="${esc(c.name)}">
 <label for="email">Email</label><input id="email" name="email" type="email" required value="${esc(c.email)}">
 <label for="phone">Phone</label><input id="phone" name="phone" type="tel" value="${esc(c.phone)}"><button class="alt">Save changes</button>`)}</details>
 ${closed ? '' : post('invite', '<button class="alt">Send invitation again</button>')}`)}
 ${c.under16 ? sec('Consent (under 16)', `<p class="muted" style="margin:0">Parent or guardian: ${esc(c.guardian_name)}${c.guardian_email ? ` · ${esc(c.guardian_email)}` : ''}${c.guardian_phone ? ` · ${esc(c.guardian_phone)}` : ''}<br>
-Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}</p>`) : ''}
+${c.consent_status === 'granted' ? `Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}` : 'Consent is recorded when they proceed.'}</p>`) : ''}
 ${sec('Forms', `${formsBlock(c.forms || [], 'therapist') || '<p class="muted" style="margin:0">No forms sent yet.</p>'}${closed || !(c.templates || []).length ? '' : `<details><summary>Send a form</summary>${post('send_form', `${templateSelect('c', c.templates)}${feeInput('c', c.fee_pence)}${formatSelect('c')}<button>Send for signing</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} The signed copy is kept here.</p></details>`}`)}
-${closed ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
+${closed || pre ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
-${closed ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
+${closed || pre ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
 <label for="rd">Day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(c.reminder_dow)}</select><button class="alt">Save reminder setting</button>`))}
-${sec('Record', closed
+${pre && !c.archived_at ? sec(c.status === 'attended' ? 'Forms sent: next, do they proceed?' : 'After the consultation', `${(c.templates || []).length ? `<details ${c.status === 'attended' ? '' : 'open'}><summary>${c.status === 'attended' || (c.forms || []).length ? 'Send the form again' : 'Mark as attended and send forms'}</summary>${post('attended', `${templateSelect('a', c.templates)}${feeInput('a', c.fee_pence)}${formatSelect('a')}<button>${(c.forms || []).length ? 'Send again' : 'Attended: send for signing'}</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} They read and sign it in the app.</p></details>` : '<p class="muted">No forms are set up for this kind of client yet.</p>'}
+<details ${c.status === 'attended' ? 'open' : ''}><summary>They are going ahead: choose a programme</summary>${post('proceed', `<label for="pp">Programme</label><select id="pp" name="programme" ${sel}>${programmeOpts(c.programmes || [], c.programme_id)}</select>
+<label for="pb">Sessions already had before joining the app</label><input id="pb" name="sessions_before_app" type="number" min="0" max="59" value="0">
+${c.under16 ? `<label class="check"><input type="checkbox" name="consent_confirmed"> A parent or guardian has given consent for this client to have sessions</label><label for="pcd">Consent given on</label><input id="pcd" name="consent_date" type="date"><label for="pcn">Note (optional)</label><input id="pcn" name="consent_note" maxlength="500">` : ''}
+<button>Make active client</button>`)}<p class="muted">Their programme, and session counting, start from here.</p></details>`) : ''}
+${sec('Record', pre && !c.archived_at ? post('did_not_proceed', '<p class="muted" style="margin:0">If they are not going ahead, the record is archived and kept. If they get in touch again you can restore it.</p><button class="alt">Did not proceed: archive</button>') : closed && c.archived_at ? '<p class="muted" style="margin:0">Archived.</p>' : closed
     ? post('reopen', `${c.freshOnReopen ? `<p class="muted" style="margin:0">Closed more than four weeks ago, so reopening starts a new programme. The earlier one is kept separately.</p><label for="ns">New programme</label><select id="ns" name="programme" ${sel}>${programmeOpts(c.programmes || [], c.programme_id)}</select>` : '<p class="muted" style="margin:0">Closed within the last four weeks, so reopening carries on the same programme.</p>'}<button>Reopen record</button>`)
     : (c.status === 'active' ? post('readonly', '<button class="alt">Make read-only (can sign in and read, not add)</button>') : post('reopen', '<button class="alt">Make active again</button>'))
       + post('close', '<button style="background:#b00020">Close record (stops sign-in)</button>'))}
@@ -175,9 +181,9 @@ function therapistHome(d) {
 <div class="grid">
 <section class="card"><h2>Today</h2>${d.today.length ? d.today.map(a => `<p>${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted">No sessions today.</p>'}
 <div class="links"><a href="/therapist/schedule">Schedule</a><a href="/therapist/book">Book a session</a></div></section>
-<section class="card"><h2>Enquiries</h2><span class="stat">${d.enquiries.new}</span><p class="muted">new · ${n(d.enquiries.consultations, 'consultation', 'consultations')} coming up</p>
+<section class="card"><h2>Enquiries</h2><span class="stat">${d.enquiries.new}</span><p class="muted">not yet booked</p>
 <div class="links"><a href="/therapist/enquiries">Open enquiries</a><a href="/therapist/enquiries/new">Add an enquiry</a></div></section>
-<section class="card"><h2>Clients</h2><span class="stat">${d.clients.active}</span><p class="muted">active${d.clients.wants_change ? ` · <strong style="color:#8a4a00">${n(d.clients.wants_change, 'client has', 'clients have')} asked to change a session</strong>` : ''}</p>
+<section class="card"><h2>Clients</h2><span class="stat">${d.clients.active}</span><p class="muted">active${d.clients.consultations ? ` · ${n(d.clients.consultations, 'consultation', 'consultations')} coming up` : ''}${d.clients.wants_change ? ` · <strong style="color:#8a4a00">${n(d.clients.wants_change, 'client has', 'clients have')} asked to change a session</strong>` : ''}</p>
 <div class="links"><a href="/therapist/clients">Your clients</a><a href="/therapist/clients/add">Add a client</a></div></section>
 <section class="card"><h2>Forms</h2><span class="stat">${d.forms_waiting}</span><p class="muted">waiting to be signed</p>
 <div class="links"><a href="/therapist/enquiries">Enquiries</a><a href="/therapist/clients">Clients</a></div></section>
@@ -213,8 +219,9 @@ ${d.closeRequests ? `<p style="color:#8a4a00"><strong>${d.closeRequests} therapi
 function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
-<section class="card"><h2>Your next session</h2>${d.next ? `<p><strong>${esc(d.next)}</strong></p>` : '<p class="muted">Nothing booked yet.</p>'}
-<p class="muted">Session ${d.pos.on} of ${d.pos.of}</p></section>
+${d.pos ? `<section class="card"><h2>Your next session</h2>${d.next ? `<p><strong>${esc(d.next)}</strong></p>` : '<p class="muted">Nothing booked yet.</p>'}
+<p class="muted">Session ${d.pos.on} of ${d.pos.of}</p></section>`
+ : `<section class="card"><h2>Your initial consultation</h2>${d.ic ? `<p><strong>${esc(d.ic)}</strong></p>` : '<p class="muted">Your therapist will be in touch to arrange it.</p>'}</section>`}
 <section class="card"><h2>Forms</h2>${d.forms.filter(f => f.status !== 'void').length ? formsBlock(d.forms, 'client') : '<p class="muted">You have no forms.</p>'}</section>
 <section class="card"><h2>Your journal</h2><p class="muted">Coming soon: write a little each week and tell us how you are feeling, from 1 to 10.</p></section>
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
@@ -333,19 +340,19 @@ function practiceStats(st) {
   const row = (n, r, b) => `<tr${b ? ' style="font-weight:600"' : ''}><td>${esc(n)}</td><td>${r.active_clients}</td><td>${r.upcoming}</td><td>${r.delivered_30}</td><td>${r.cancelled_30}</td><td>${r.change_requests}</td></tr>`;
   return wide('Practice statistics', `<p><strong>Practice statistics</strong></p>
 <p class="muted">Numbers only. Client names and details are never shown in this account.</p>
-<p>${a.therapists} active therapist${a.therapists === 1 ? '' : 's'}${a.suspended ? `, ${a.suspended} suspended` : ''} · ${t.active_clients} active client${t.active_clients === 1 ? '' : 's'} · ${t.readonly_clients} read-only · ${t.closed_clients} closed</p>
+<p>${a.therapists} active therapist${a.therapists === 1 ? '' : 's'}${a.suspended ? `, ${a.suspended} suspended` : ''} · ${t.active_clients} active client${t.active_clients === 1 ? '' : 's'} · ${t.consultation_clients} at consultation stage · ${t.readonly_clients} read-only · ${t.closed_clients} closed · ${t.archived_clients} archived</p>
 <div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:14px;width:100%" aria-label="Counts by therapist">
 <thead><tr style="text-align:left"><th>Therapist</th><th>Active clients</th><th>Upcoming sessions</th><th>Delivered (30 days)</th><th>Cancelled (30 days)</th><th>Change requests</th></tr></thead>
 <tbody>${st.therapists.map(r => row(r.name + (r.status === 'suspended' ? ' (suspended)' : ''), r)).join('')}${row('Practice total', t, true)}</tbody></table></div>
 <p style="margin-bottom:2px"><strong>Enquiries</strong></p>
 <p class="muted" style="margin:2px 0">By route: ${Object.keys(CHANNEL).map(k => `${esc(CHANNEL[k])} ${(st.enquiries.channel[k] || 0)}`).join(' · ')}</p>
-<p class="muted" style="margin:2px 0">By stage: ${Object.keys(STAGE).map(k => `${esc(STAGE[k])} ${(st.enquiries.stage[k] || 0)}`).join(' · ')}</p>
+<p class="muted" style="margin:2px 0">By stage: ${Object.keys(STAGE).map(k => `${esc(STAGE[k])} ${(st.enquiries.stage[k] || 0)}`).join(' · ')} · Archived ${st.enquiries.archived || 0}</p>
 <p><a href="/practice">Back</a></p>`);
 }
 
 // ---------- enquiries ----------
 const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Entered by therapist' };
-const STAGE = { new: 'New', consultation: 'Consultation set', attended: 'Attended', proceeding: 'Proceeding', not_proceeding: 'Not proceeding', converted: 'Now a client' };
+const STAGE = { new: 'Not yet booked', converted: 'Booked a consultation (now a client)' };
 
 function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) {
   const who = therapist
@@ -369,28 +376,43 @@ const enquireThanks = msg => page('Thank you', `<p>${esc(msg || 'Thank you. Your
 
 function therapistEnquiries(rows, links, msg, ok) {
   const post = (id, action, inner) => `<form method="post" action="/therapist/enquiries/${id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
-  const card = e => `<section style="border-top:1px solid #ddd;padding:12px 0" aria-label="${esc(e.name)}">
+  const card = e => {
+    const mail = e.for_child ? e.guardian_email : e.email;
+    return `<section style="border-top:1px solid #ddd;padding:12px 0" aria-label="${esc(e.name)}">
 <p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ' <span class="muted">(child, under 16)</span>' : ''}<br>
-<span class="muted">${esc(STAGE[e.stage])} · ${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.ic_text ? `<br>Consultation: ${esc(e.ic_text)}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
-${e.stage === 'converted' ? (e.converted_client_id ? `<p style="margin:6px 0"><a href="/therapist/client/${e.converted_client_id}">Open their client record</a></p>` : '')
-  : e.stage === 'not_proceeding' ? '' : `<form method="get" action="/therapist/clients/add"><input type="hidden" name="from" value="${e.id}"><button style="max-width:240px">Add as a client</button></form>`}
-${e.stage === 'converted' ? '' : `<details><summary>Manage</summary>
-${post(e.id, 'consult', `<label for="d${e.id}">Consultation date</label><input id="d${e.id}" name="date" type="date" required value="${e.ic_at ? T.inputDate(e.ic_at) : ''}"><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="${e.ic_at ? T.timeShort(e.ic_at) : '10:00'}"><button class="alt">${e.ic_at ? 'Move consultation' : 'Set consultation'}${e.email ? ' and email them' : ''}</button>`)}
-${e.ic_at ? post(e.id, 'clear_consult', '<button class="alt">Remove consultation</button>') : ''}
-${formsBlock(e.forms || [], 'therapist')}
-${(e.templates || []).length ? `<details open><summary>${e.stage === 'attended' || (e.forms || []).length ? 'Send the form again' : 'Mark as attended and send forms'}</summary>${post(e.id, 'attended', `${templateSelect(e.id, e.templates)}${feeInput(e.id, e.fee_pence)}${formatSelect(e.id)}<button>${(e.forms || []).length ? 'Send again' : 'Attended: send for signing'}</button>`)}<p class="muted">${e.for_child ? 'It goes to the parent or guardian.' : 'It goes to the person who enquired.'} They read and sign it in the app, and the signed copy is kept with this enquiry and then their client record.</p></details>` : '<p class="muted">No forms are set up for this kind of enquiry yet.</p>'}
+<span class="muted">${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
+${(e.matches || []).map(m => `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Matches an archived ${m.kind === 'client' ? 'client' : 'enquiry'}:</strong> ${esc(m.name)}<br><span class="muted">Archived ${day(m.archived_at)} (${esc(m.reason)}). Check it is the same person.</span></p>
+${post(e.id, 'restore_match', `<input type="hidden" name="kind" value="${m.kind}"><input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: restore their record</button>`)}</div>`).join('')}
+${mail ? '' : `<p class="muted" style="margin:6px 0">No email address yet. One is needed to book a consultation, so they can be invited to their client area.</p>${post(e.id, 'contact', `<label for="ce${e.id}">${e.for_child ? "Parent or guardian's email" : 'Email'}</label><input id="ce${e.id}" name="email" type="email"><button class="alt">Save email</button>`)}`}
+${mail ? `<details open><summary>Book the initial consultation</summary>${post(e.id, 'consult', `<label for="d${e.id}">Date</label><input id="d${e.id}" name="date" type="date" required><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="10:00"><button>Book consultation</button>`)}
+<p class="muted">Booking it moves them to your Clients as "Consultation booked", emails them the date with a calendar file, and invites them to their client area.</p></details>` : ''}
+<details><summary>Manage</summary>
 ${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
-${e.stage !== 'not_proceeding' ? post(e.id, 'not_proceeding', '<button class="alt">Not proceeding</button>') : post(e.id, 'new', '<button class="alt">Reopen</button>')}
-${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details>`}</section>`;
-  return wide('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">Only you can see these.</p>${note(msg, ok)}
-<div class="cols">${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p>'}</div>
+${post(e.id, 'archive', '<button class="alt">Archive (not going ahead)</button>')}
+${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details></section>`;
+  };
+  return wide('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">People who have not yet booked a consultation. Only you can see these. Once a consultation is booked they move to your Clients. Enquiries with no progress for 60 days are archived.</p>${note(msg, ok)}
+<div class="cols">${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries waiting.</p>'}</div>
 <form method="get" action="/therapist/enquiries/new" style="border-top:1px solid #ddd;padding-top:12px"><button>Add an enquiry (phone or in person)</button></form>
+<p><a href="/therapist/archive">Archive</a></p>
 <details style="border-top:1px solid #ddd;padding-top:12px;margin-top:12px"><summary>Enquiry links</summary>
 <p class="muted">Your own page (use this for your private page, Google ads and Facebook by adding the route shown):</p>
 <p style="word-break:break-all"><a href="${esc(links.mine)}">${esc(links.mine)}</a></p>
 <p class="muted" style="margin:2px 0">For a Google ad add <code>?src=google</code>; for Facebook add <code>?src=facebook</code>.</p>
 <p class="muted">The practice's form (asks which therapist; for the website):</p>
 <p style="word-break:break-all"><a href="${esc(links.practice)}">${esc(links.practice)}</a></p></details>
+<p><a href="/therapist">Back</a></p>`);
+}
+
+function archivePage(clients, enquiries, msg, ok) {
+  const when = r => day(r.archived_at);
+  return wide('Archive', `<p><strong>Archive</strong></p><p class="muted">Records that did not go ahead are kept here, out of your lists. If the same person gets in touch again you are shown the match on their new enquiry and can restore the old record. Only you can see these.</p>${note(msg, ok)}
+<p style="margin-bottom:2px"><strong>Did not proceed</strong></p>
+${clients.length ? clients.map(c => `<div style="border-top:1px solid #ddd;padding:10px 0"><a href="/therapist/client/${c.id}"><strong>${esc(c.name)}</strong></a> <span class="muted">archived ${when(c)}</span>
+<form method="post" action="/therapist/client/${c.id}"><input type="hidden" name="action" value="restore"><button class="alt" style="max-width:260px">Restore to consultation stage</button></form></div>`).join('') : '<p class="muted">None.</p>'}
+<p style="margin-bottom:2px"><strong>Enquiries</strong></p>
+${enquiries.length ? enquiries.map(e => `<div style="border-top:1px solid #ddd;padding:10px 0"><strong>${esc(e.name)}</strong> <span class="muted">archived ${when(e)}${e.archive_reason === 'stale' ? ' (no progress for 60 days)' : ''}</span>
+<form method="post" action="/therapist/archive/enquiry/${e.id}"><button class="alt" style="max-width:260px">Restore as an enquiry</button></form></div>`).join('') : '<p class="muted">None.</p>'}
 <p><a href="/therapist">Back</a></p>`);
 }
 
@@ -415,7 +437,7 @@ function enquiryManual(f = {}, msg) {
 <label for="ge">Their email</label><input id="ge" name="guardian_email" type="email" value="${esc(f.guardian_email)}">
 <label for="gp">Their telephone</label><input id="gp" name="guardian_phone" type="tel" value="${esc(f.guardian_phone)}"></fieldset>
 <label for="nt">Notes (optional)</label><input id="nt" name="notes" maxlength="1000" value="${esc(f.notes)}">
-<p class="muted">An email or phone number is needed. If a consultation date is set and there is an email address, they are sent the date and a calendar file.</p>
+<p class="muted">An email or phone number is needed. If you set a consultation date they become a client ("Consultation booked") straight away and are emailed the date, a calendar file and an invitation to their client area. That needs an email address (the parent or guardian's, for a child).</p>
 <button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
 }
 
@@ -495,4 +517,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

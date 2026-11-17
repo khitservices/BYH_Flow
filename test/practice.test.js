@@ -25,12 +25,12 @@ test.after(async () => {
   server.close(); await require('../lib/db').pool.end();
 });
 
-function client() {
+function client(ip) {
   const jar = {};
   const call = async (method, path, form) => {
     const r = await fetch(base + path, {
       method, redirect: 'manual',
-      headers: { cookie: Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { ...(ip ? { 'x-forwarded-for': ip } : {}), cookie: Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' },
       body: form ? new URLSearchParams(form).toString() : undefined,
     });
     for (const c of r.headers.getSetCookie()) { const [kv] = c.split(';'); const i = kv.indexOf('='); jar[kv.slice(0, i)] = kv.slice(i + 1); }
@@ -105,43 +105,90 @@ test('public form: bad input is refused, bots are ignored, and the form is rate 
   assert.equal(last.status, 429);
 });
 
-test('therapist pipeline: phone capture, consultation with calendar file, stages, and turning an enquiry into a client', { skip }, async () => {
+test('therapist pipeline: phone capture, booking the consultation makes them a client, did-not-proceed is archived and restorable', { skip }, async () => {
   const a = await addStaff('Thera Pipe', 'therapist'); const c = await staffIn(a.email);
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Phil', last_name: 'Phone', phone: '07700 900111', notes: 'rang Tuesday', enquiry_date: '2027-08-30' })).loc, '/therapist/enquiries?msg=added');
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'No', last_name: 'Body' })).status, 400);
-  let e = await enq('Phil Phone'); assert.equal(e.channel, 'phone'); assert.equal(e.notes, 'rang Tuesday'); assert.equal(String(e.enquiry_date.toISOString ? e.enquiry_date.toISOString() : e.enquiry_date).slice(0, 4) >= '2027' || true, true);
-  // no email on file: the consultation is recorded but nothing is sent
+  let e = await enq('Phil Phone'); assert.equal(e.channel, 'phone'); assert.equal(e.notes, 'rang Tuesday'); assert.equal(e.stage, 'new');
+  // no email on file: cannot be booked (they could not be invited to their client area), until one is added
+  assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-02', time: '11:00' })).loc, '/therapist/enquiries?msg=need_email');
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.clients WHERE name='Phil Phone'`))[0].n, 0);
+  // with an email: booking the consultation creates the client at once, emails the date + calendar file + invitation
+  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Emma', last_name: 'Mail', email: em('emma'), phone: '07700 900777', address: '3 Low Road' }); e = await enq('Emma Mail');
   let n = mail.outbox.length;
-  assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-02', time: '11:00' })).loc, '/therapist/enquiries?msg=consult_set_nomail');
-  assert.equal(mail.outbox.length, n); e = await enq('Phil Phone'); assert.equal(e.stage, 'consultation');
-  // with an email: emailed a calendar file; moving it replaces the entry; not proceeding cancels it
-  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Emma', last_name: 'Mail', email: em('emma') }); e = await enq('Emma Mail');
+  assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-03', time: '10:00' })).loc, '/therapist/enquiries?msg=booked');
+  let m = mail.outbox.slice(n).filter(x => x.to === em('emma'));
+  const book = m.find(x => x.icalEvent); assert.ok(book); assert.match(book.html, /3 September 2027 at 10:00/); assert.match(book.icalEvent.content, /UID:consultation-\d+@/); assert.match(book.icalEvent.content, /SEQUENCE:0/);
+  assert.ok(m.some(x => /client area/.test(x.html)), 'invited to their client area at booking');
+  e = await enq('Emma Mail'); assert.equal(e.stage, 'converted'); assert.ok(e.converted_client_id);
+  let cl = (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [e.converted_client_id]))[0];
+  assert.equal(cl.status, 'consultation'); assert.equal(cl.programme_sessions, null); assert.equal(cl.address, '3 Low Road'); assert.equal(cl.channel, 'phone');
+  assert.ok(!(await c.get('/therapist/enquiries')).text.includes('Emma Mail'));                 // no longer an enquiry
+  assert.match((await c.get('/therapist/clients')).text, /Emma Mail[\s\S]*Consultation booked/);
+  assert.ok(await clientIn(em('emma')), 'they can sign in to their client area straight away');
+  const home = (await (await clientIn(em('emma'))).get('/journal')).text; assert.match(home, /Your initial consultation/); assert.match(home, /3 September 2027 at 10:00/);
+  // move it (replaces the calendar entry); programme actions are not offered yet
   n = mail.outbox.length;
-  assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-03', time: '10:00' })).loc, '/therapist/enquiries?msg=consult_set');
-  let m = mail.outbox.slice(n).find(x => x.to === em('emma')); assert.ok(m); assert.match(m.html, /3 September 2027 at 10:00/); assert.match(m.icalEvent.content, /UID:consultation-\d+@/); assert.match(m.icalEvent.content, /SEQUENCE:0/);
-  n = mail.outbox.length;
-  await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-04', time: '12:00' });
+  await post(c, `/therapist/client/${cl.id}`, { action: 'ic', date: '2027-09-04', time: '12:00' });
   m = mail.outbox.slice(n).find(x => x.to === em('emma')); assert.match(m.html, /has moved/); assert.match(m.icalEvent.content, /SEQUENCE:1/);
+  const rec = (await c.get(`/therapist/client/${cl.id}`)).text; assert.match(rec, /Initial consultation/); assert.ok(!rec.includes('Extend programme'));
+  assert.equal((await post(c, `/therapist/client/${cl.id}`, { action: 'extend', add_sessions: '6' })).loc, `/therapist/client/${cl.id}?msg=unknown`);
+  // proceeding needs a programme (and, under 16, consent), then they are Active
+  assert.equal((await post(c, `/therapist/client/${cl.id}`, { action: 'proceed' })).loc, `/therapist/client/${cl.id}?msg=nodate`);
+  // did not proceed: cancelled, archived, kept, out of the lists
   n = mail.outbox.length;
-  await post(c, `/therapist/enquiries/${e.id}`, { action: 'not_proceeding' });
-  m = mail.outbox.slice(n).find(x => x.to === em('emma')); assert.match(m.html, /cancelled/); assert.equal((await enq('Emma Mail')).stage, 'not_proceeding');
-  // turn into a client: the form is pre-filled, and saving marks the enquiry converted
-  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Cathy', last_name: 'Convert', email: em('cathy'), phone: '07700 900222', address: '1 High Street' }); e = await enq('Cathy Convert');
-  const pre = await c.get(`/therapist/clients/add?from=${e.id}`); assert.match(pre.text, /value="Cathy Convert"/); assert.match(pre.text, new RegExp(`value="${em('cathy').replace('.', '\\.')}"`));
-  const r = await post(c, '/therapist/clients/add', { from_enquiry: e.id, name: 'Cathy Convert', email: em('cathy'), programme: await progId(8), sessions_before_app: '0', reminder_dow: '3' });
-  assert.match(r.loc, /^\/therapist\/client\/\d+\?msg=added/);
-  e = await enq('Cathy Convert'); assert.equal(e.stage, 'converted'); assert.ok(e.converted_client_id);
-  assert.equal((await c.get(`/therapist/clients/add?from=${e.id}`)).text.includes('Cathy Convert'), false); // converted ones are not offered again
-  // a child enquiry pre-fills the child's details with the parent as guardian
+  await post(c, `/therapist/client/${cl.id}`, { action: 'did_not_proceed' });
+  m = mail.outbox.slice(n).find(x => x.to === em('emma')); assert.match(m.html, /cancelled/);
+  cl = (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [cl.id]))[0];
+  assert.equal(cl.status, 'closed'); assert.equal(cl.closed_reason, 'did_not_proceed'); assert.ok(cl.archived_at);
+  assert.ok(!(await c.get('/therapist/clients')).text.includes('Emma Mail'));
+  assert.match((await c.get('/therapist/archive')).text, /Emma Mail/);
+  assert.equal(await clientIn(em('emma')), null, 'archived: no sign-in');
+  // she gets in touch again: the new enquiry is matched against the archive, the therapist confirms, the old record is restored
+  const anon = client('10.20.30.40');
+  assert.equal((await post(anon, '/enquire', { therapist: a.id, name: 'Emma M', email: em('EMMA'.toLowerCase()) })).loc, '/enquire/thanks');
+  const again = (await q(`SELECT * FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new' AND name='Emma M'`, [a.id]))[0];
+  const list = (await c.get('/therapist/enquiries')).text; assert.match(list, /Matches an archived client/); assert.match(list, /Emma Mail/);
+  const rb = await post(c, `/therapist/enquiries/${again.id}`, { action: 'restore_match', kind: 'client', match: cl.id });
+  assert.equal(rb.loc, `/therapist/client/${cl.id}?msg=restored`);
+  cl = (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [cl.id]))[0]; assert.equal(cl.status, 'consultation'); assert.equal(cl.archived_at, null);
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.clients WHERE lower(email)=$1`, [em('emma')]))[0].n, 1);   // no duplicate
+  assert.equal((await q(`SELECT stage FROM clinical.enquiries WHERE id=$1`, [again.id]))[0].stage, 'converted');
+  // another therapist never sees this therapist's archive
+  const o = await addStaff('Thera Other Pipe', 'therapist'), co = await staffIn(o.email);
+  await post(c, `/therapist/client/${cl.id}`, { action: 'did_not_proceed' });
+  await post(anon, '/enquire', { therapist: o.id, name: 'Emma Elsewhere', email: em('emma') });
+  assert.ok(!(await co.get('/therapist/enquiries')).text.includes('Matches an archived'));
+  // an enquiry archived by hand is matched the same way and restored without a duplicate
+  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Ned', last_name: 'Nowhere', email: em('ned') }); e = await enq('Ned Nowhere');
+  assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'archive' })).loc, '/therapist/enquiries?msg=archived');
+  await post(anon, '/enquire', { therapist: a.id, name: 'Ned N', email: em('ned') });
+  const ned2 = (await q(`SELECT id FROM clinical.enquiries WHERE name='Ned N'`))[0];
+  assert.match((await c.get('/therapist/enquiries')).text, /Matches an archived enquiry/);
+  await post(c, `/therapist/enquiries/${ned2.id}`, { action: 'restore_match', kind: 'enquiry', match: e.id });
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE therapist_id=$1 AND name LIKE 'Ned%'`, [a.id]))[0].n, 1);
+  assert.equal((await enq('Ned Nowhere')).archived_at, null);
+  // 60 days with no progress archives an enquiry automatically
+  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Old', last_name: 'Enquiry', email: em('old') });
+  await q(`UPDATE clinical.enquiries SET created_at = now() - interval '61 days', last_activity_at = now() - interval '61 days' WHERE name='Old Enquiry'`);
+  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'New', last_name: 'Enquiry', email: em('newer') });
+  assert.ok(!(await c.get('/therapist/enquiries')).text.includes('Old Enquiry'));
+  assert.equal((await enq('Old Enquiry')).archive_reason, 'stale'); assert.equal((await enq('New Enquiry')).archived_at, null);
+  // under 16: the child is invited at the guardian's address, consent is recorded when they proceed
   await post(c, '/therapist/enquiries/add', { type: 'child', first_name: 'Kid', last_name: 'Pat', guardian_name: 'Parent Pat', relationship: 'Mother', guardian_email: em('parent'), guardian_phone: '07700 900333' }); e = await enq('Kid Pat');
-  const kid = (await c.get(`/therapist/clients/add?from=${e.id}`)).text; assert.match(kid, /value="Kid Pat"/); assert.match(kid, /name="guardian_email" type="email" value="[^"]*parent/); assert.match(kid, /name="guardian_name" value="Parent Pat"/); assert.match(kid, /name="under16" checked/);
+  await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-10-01', time: '09:00' });
+  const kid = (await q(`SELECT * FROM clinical.clients WHERE name='Kid Pat'`))[0]; assert.equal(kid.under16, true); assert.equal(kid.consent_status, 'pending'); assert.equal(kid.email, em('parent'));
+  assert.equal((await post(c, `/therapist/client/${kid.id}`, { action: 'proceed', programme: await progId(8) })).loc, `/therapist/client/${kid.id}?msg=consent`);
+  assert.equal((await post(c, `/therapist/client/${kid.id}`, { action: 'proceed', programme: await progId(8), consent_confirmed: 'on', consent_date: '2027-10-01' })).loc, `/therapist/client/${kid.id}?msg=proceeded`);
+  const act = (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [kid.id]))[0]; assert.equal(act.status, 'active'); assert.equal(act.consent_status, 'granted'); assert.equal(act.programme_sessions, 8);
+  await assert.rejects(q(`UPDATE clinical.clients SET consent_status='pending' WHERE id=$1`, [kid.id]));          // database refuses an active under-16 without consent
   // removing a therapist with an open enquiry needs a taker, and the enquiry goes with it
   const b = await addStaff('Thera Taker2', 'therapist'), p = await addStaff('Mgr Pipe', 'practice_manager'), cp = await staffIn(p.email);
   await q(`UPDATE clinical.clients SET status='closed' WHERE therapist_id=$1`, [a.id]);
   const open = await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE therapist_id=$1 AND stage<>'converted'`, [a.id]); assert.ok(open[0].n > 0);
   assert.match((await cp.post(`/practice/team/${a.id}`, { action: 'remove' })).text, /open enquir/);
   await cp.post(`/practice/team/${a.id}`, { action: 'remove', reassign_to: b.id });
-  assert.equal((await enq('Kid Pat')).therapist_id, b.id);
+  assert.equal((await enq('Phil Phone')).therapist_id, b.id);
 });
 
 test('practice statistics: the manager sees counts only, and nobody else gets the page', { skip }, async () => {
@@ -168,12 +215,17 @@ test('manual enquiry form (from the ITC app): adult and child fields, guardian, 
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Bad', last_name: 'Date', email: em('bd'), ic_date: '2027-02-30' })).status, 400);
   assert.equal(await enq('Only Name'), undefined);
   const n = mail.outbox.length;
-  assert.equal((await post(c, '/therapist/enquiries/add', { type: 'child', first_name: 'Ben', last_name: 'Child', phone: '07700 900444', guardian_name: 'Gail Guardian', relationship: 'Aunt', guardian_email: em('gail'), address: '2 Low Road', ic_date: '2027-09-10', ic_time: '15:30' })).loc, '/therapist/enquiries?msg=consult_set');
-  const e = await enq('Ben Child');
-  assert.equal(e.for_child, true); assert.equal(e.stage, 'consultation'); assert.equal(e.guardian_name, 'Gail Guardian'); assert.equal(e.relationship, 'Aunt'); assert.equal(e.address, '2 Low Road');
-  const m = mail.outbox.slice(n).find(x => x.to === em('gail')); assert.ok(m, 'the guardian is emailed, not the child');
+  const r = await post(c, '/therapist/enquiries/add', { type: 'child', first_name: 'Ben', last_name: 'Child', phone: '07700 900444', guardian_name: 'Gail Guardian', relationship: 'Aunt', guardian_email: em('gail'), address: '2 Low Road', ic_date: '2027-09-10', ic_time: '15:30' });
+  assert.match(r.loc, /^\/therapist\/client\/\d+\?msg=ic_set/);                      // a consultation date makes them a client straight away
+  const cl = (await q(`SELECT * FROM clinical.clients WHERE name='Ben Child'`))[0];
+  assert.equal(cl.under16, true); assert.equal(cl.status, 'consultation'); assert.equal(cl.guardian_name, 'Gail Guardian'); assert.equal(cl.address, '2 Low Road'); assert.equal(cl.email, em('gail'));
+  assert.equal((await enq('Ben Child')).stage, 'converted');
+  const m = mail.outbox.slice(n).find(x => x.to === em('gail') && x.icalEvent); assert.ok(m, 'the guardian is emailed, not the child');
   assert.match(m.html, /Hello Gail/); assert.match(m.html, /10 September 2027 at 15:30/);
-  const page = (await c.get('/therapist/enquiries')).text; assert.match(page, /Parent or guardian: Gail Guardian \(Aunt\)/); assert.match(page, /2 Low Road/);
+  const rec = (await c.get(r.loc.split('?')[0])).text; assert.match(rec, /Parent or guardian: Gail Guardian/); assert.match(rec, /Consent is recorded when they proceed/);
+  // without a consultation date it stays an enquiry
+  await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Still', last_name: 'Enquiry', email: em('still') });
+  const page = (await c.get('/therapist/enquiries')).text; assert.match(page, /Still Enquiry/); assert.ok(!page.includes('Ben Child'));
 });
 
 test('programmes: the manager keeps the list, a single fixed-price session works, and clients keep what they were given', { skip }, async () => {
@@ -221,8 +273,7 @@ test('landing pages: each user type gets their own overview, and the manager see
   const home = (await cl.get('/journal')).text;
   assert.match(home, /Hello Secret/); assert.match(home, /Your next session/); assert.match(home, /20 September 2027 at 10:00/); assert.match(home, /Session 1 of 8/); assert.match(home, /Your client area with Thera Home/);
   assert.equal((await cl.get('/practice')).status, 403); assert.equal((await cl.get('/therapist')).status, 403);
-  // an enquiry that became a client links through to the record, and "proceeding" is no longer a dead-end button
-  const list = (await ct.get('/therapist/enquiries')).text; assert.match(list, /Add as a client/); assert.ok(!list.includes('Mark as proceeding'));
+  const list = (await ct.get('/therapist/enquiries')).text; assert.match(list, /Book the initial consultation/); assert.ok(!list.includes('Mark as proceeding'));
 });
 
 test('cleanse script refuses to run without the exact confirmation', async () => {

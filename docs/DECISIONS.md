@@ -225,3 +225,12 @@
   - Practice manager (`/practice`): numbers only. Team, clients and sessions, enquiries by stage, programmes, forms, set-up. Warns if email is not set up or a therapist has asked to close their account. Never a name or detail.
   - Client (`/journal`): next session and where they are in the programme, forms to sign or open, relaxation link, and a placeholder for the journal and weekly score (step 6).
 - Enquiries: "Mark as proceeding" removed (it changed a label but created no client). An enquiry that is not yet a client has a clear "Add as a client" button; once converted the card links to the client record.
+
+## Enquiry → client (decided 17 Nov 2026)
+- **Booking the initial consultation (IC) ends the enquiry.** The person becomes a client at once, status **Consultation booked** → **Attended** → **Active**. Enquiries hold only people not yet booked.
+- At IC booking: client record created, booking email with calendar file sent, and an invitation to the client area sent (needs an email; for a child with none of their own, the parent or guardian's address is used). A phone-only enquiry cannot be booked until an email is added.
+- Programme (and price) is chosen when they proceed after the IC; that makes them Active and starts session counting. For under-16s consent is attested at that point (database refuses an Active under-16 without it).
+- After the IC the therapist marks Attended and sends the forms from the client record, or records that they are going ahead.
+- Clients at the consultation stage can sign in (forms, consultation date); programme, reminders and sessions are not offered until Active.
+- **Archive.** Enquiries archived by hand or untouched for 60 days, and clients marked **Did not proceed**, are kept (not deleted) and leave the working lists. A returning person (same email or phone) is matched against the *same therapist's* archive only; the therapist confirms with one click and the old record is restored (no duplicate). Archived clients cannot sign in. The manager sees archive counts only.
+- Parked: auto-archive of long-quiet Consultation-stage clients; practice-wide matching across therapists (deliberately not done: would reveal one therapist's records to another).
