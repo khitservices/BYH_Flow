@@ -21,6 +21,7 @@ per role. Clients, sessions, journal and the enquiry pipeline come in later phas
   `docker compose exec app node scripts/create-staff.js "Name" email --practice-manager` (add `--therapist` to
   create their separate therapist account too). Everyone after that is added on the Team page, which emails them
   an invitation. Clients are added with `scripts/create-client.js` until the client screens exist.
+- `scripts/cleanse.js keepteam|full --confirm ERASE` clears test data (server only).
 - **Practice name and colour** are set in the app (Settings > Practice details).
 - **Email** is set up in the app, not in `.env`: a practice manager opens Settings > Email and enters the practice
   mailbox's outgoing (SMTP) server, port, username and password, sends a test, then saves. Everything the app sends

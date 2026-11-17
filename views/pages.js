@@ -260,4 +260,18 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 <button>Save</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+// Practice statistics (practice manager). Numbers only.
+function practiceStats(st) {
+  const t = st.totals, a = st.accounts;
+  const row = (n, r, b) => `<tr${b ? ' style="font-weight:600"' : ''}><td>${esc(n)}</td><td>${r.active_clients}</td><td>${r.upcoming}</td><td>${r.delivered_30}</td><td>${r.cancelled_30}</td><td>${r.change_requests}</td></tr>`;
+  return page('Practice statistics', `<p><strong>Practice statistics</strong></p>
+<p class="muted">Numbers only. Client names and details are never shown in this account.</p>
+<p>${a.therapists} active therapist${a.therapists === 1 ? '' : 's'}${a.suspended ? `, ${a.suspended} suspended` : ''} · ${t.active_clients} active client${t.active_clients === 1 ? '' : 's'} · ${t.readonly_clients} read-only · ${t.closed_clients} closed</p>
+<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:14px;width:100%" aria-label="Counts by therapist">
+<thead><tr style="text-align:left"><th>Therapist</th><th>Active clients</th><th>Upcoming sessions</th><th>Delivered (30 days)</th><th>Cancelled (30 days)</th><th>Change requests</th></tr></thead>
+<tbody>${st.therapists.map(r => row(r.name + (r.status === 'suspended' ? ' (suspended)' : ''), r)).join('')}${row('Practice total', t, true)}</tbody></table></div>
+<p class="muted">Enquiry counts by route and stage arrive with the enquiries section.</p>
+<p><a href="/practice">Back</a></p>`);
+}
+
+module.exports = { practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

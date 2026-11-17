@@ -147,9 +147,12 @@ router.get('/practice', pm, async (req, res) => {
   res.send(V.shell(req.session.staff.name, 'Practice manager', 'Set up the practice and manage the team here. Client records are not available in this account.', [
     { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
     { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
+    { href: '/practice/stats', label: 'Practice statistics (numbers only)' },
     { href: '/practice/team', label: 'Team (add or remove therapists and managers)' },
   ]));
 });
+
+router.get('/practice/stats', pm, async (_req, res) => res.send(V.practiceStats(await require('../lib/stats').practiceStats())));
 
 // ---------- team: the practice manager adds, changes and removes accounts ----------
 // Nothing here reads client records. Where a therapist has clients, only the COUNT is shown.

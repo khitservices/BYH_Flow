@@ -170,3 +170,9 @@
 - Consent wording for under-16s and the controller/processor position (data-protection adviser).
 - Processor/hosting paperwork for VPS2.
 - Firewall check on VPS2 (MySQL on 3306 and a node process on 8090 were listening on all interfaces).
+
+## Step 4: practice management
+- The practice manager's statistics page (`/practice/stats`) is counts only: per therapist (named, as staff) the number of active clients, upcoming sessions, sessions delivered and cancelled in the last 30 days and pending change requests, plus practice totals. Client names, emails and notes are never queried for this page. Enquiry counts by route and stage arrive with the enquiries step.
+- BYH hid small numbers (fewer than 5) and showed no per-therapist breakdown. Kev asked for counts by therapist and the Team page already shows each therapist's client count, so exact counts are shown. Revisit if a larger practice wants suppression.
+- Moving clients between therapists needed no new tool: handover (therapist account page) and removal-reassignment (Team page) already cover it.
+- BYH's `/admin/cleanse` web route is replaced by `scripts/cleanse.js`, run on the server only: `keepteam` clears clients and sessions, `full` also clears therapists; practice managers and settings are always kept. It needs `--confirm ERASE`. There is deliberately no web page for it.
