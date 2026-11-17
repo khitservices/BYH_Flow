@@ -298,3 +298,11 @@
 - Sign-in is unchanged: 30 minutes idle, 12 hours at most, emailed code. On a phone that means signing in again between calls. A "stay signed in on this phone" option is a security decision for Kev (clinical data on a personal phone); not assumed.
 - Sources can be added by the manager (Client sources) or typed on the spot by a therapist; stopped (kept on old records) or, when never used, deleted. The list is not meant to be exhaustive.
 - The public links (/enquire, /enquire/t/slug) are unchanged: they are for clients and stay short. Not decided: whether the public form should also ask "how did you hear about us" (today it detects it from the link).
+
+## Reminders and the daily digest (17 Nov 2026, step 7)
+- An hourly sweep in the app (lib/reminders.js) sends four kinds of email. Each is claimed in core.reminder_log first, so a restart never sends one twice; a failed send is retried on later sweeps, up to 3 times. Times are UK time.
+- **Weekly check-in:** to active clients with reminders on, on their reminder day, from 09:00, and only if they have not yet given this week's score. Dates and a link only, nothing about the therapy. Goes to the guardian's email for under-16s. Sent from the therapist's own address when they have set one.
+- **Appointment and consultation reminders:** once, when a booked session or initial consultation is between 1 and 25 hours away (so roughly the day before). Moving it sends a fresh reminder for the new time. Includes the place. Always on for booked appointments (the reminders on/off switch is for the weekly check-in only; say if you want it to cover these).
+- **Unsigned forms:** a reminder with a fresh 30-day link 3 days after sending and again after 7 days, then left to the therapist. The text the signer sees does not change.
+- **Therapist morning summary:** Monday to Friday from 07:00, only when there is something to say: appointments today, new enquiries, change requests, forms waiting, new score notes since yesterday. Counts only, no names. To the therapist's own sign-in address from the practice sender.
+- Not built: a way for clients to stop reminders themselves (the therapist switches the weekly one off on the client record); quiet hours per client; a retry queue beyond 3 tries (outbox with retries is still parked).

@@ -170,4 +170,10 @@ router.post('/practice/forms/:id', pm, async (req, res) => {
   saveTemplate(req, res, id);
 });
 
-module.exports = { router, sendForm, activeTemplates };
+// A fresh signing link for a form that is still unsigned (for a reminder). The text shown does not change.
+async function reissueLink(formId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const r = await q(`UPDATE documents.forms SET token_hash=$2, token_expires_at = now() + ($3 || ' days')::interval WHERE id=$1 AND status='sent' RETURNING id`, [formId, tokenHash(token), String(DAYS)]);
+  return r.length ? token : null;
+}
+module.exports = { router, sendForm, activeTemplates, reissueLink };

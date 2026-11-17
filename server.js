@@ -71,5 +71,7 @@ if (require.main === module) {
   app.listen(port, () => console.log(`listening on ${port}`));
   const sweep = () => require('./lib/archive').archiveStale().then(n => n && console.log(`[archive] ${n} stale enquir${n === 1 ? 'y' : 'ies'} archived`)).catch(e => console.error('[archive]', e.message));
   setTimeout(sweep, 30000); setInterval(sweep, 3600000).unref();
+  const remind = () => require('./lib/reminders').run().then(r => { const n = Object.values(r).reduce((a, b) => a + b, 0); if (n) console.log('[reminders] sent', JSON.stringify(r)); }).catch(e => console.error('[reminders]', e.message));
+  setTimeout(remind, 60000); setInterval(remind, 3600000).unref();
 }
 module.exports = app;

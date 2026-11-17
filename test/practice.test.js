@@ -19,6 +19,7 @@ test.before(async () => {
 });
 test.after(async () => {
   if (skip) return;
+  await q(`DELETE FROM documents.forms WHERE therapist_id IN (SELECT id FROM core.staff WHERE email LIKE '%.${run}@example.test')`);
   await q(`DELETE FROM clinical.enquiries WHERE therapist_id IN (SELECT id FROM core.staff WHERE email LIKE '%.${run}@example.test')`);
   await q(`DELETE FROM clinical.clients WHERE email LIKE '%.${run}@example.test'`);
   await q(`DELETE FROM core.staff WHERE email LIKE '%.${run}@example.test'`);
@@ -600,4 +601,54 @@ test('phone app: installable manifest and icons, opens the enquiry form, returns
   await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, phone, heard_from) VALUES ($1,'phone',false,'Uses FB','07000',$2)`, [t.id, 'Facebook']);
   const r = await cp.post('/practice/sources', { id: String(fb), action: 'delete' }); assert.equal(r.status, 400); assert.match(r.text, /cannot be deleted/);
   assert.equal((await q(`SELECT 1 FROM core.referral_sources WHERE id=$1`, [fb])).length, 1);
+});
+
+test('reminders: weekly check-in once, appointment day-before, unsigned forms 3 and 7 days, therapist digest; none twice, none to the wrong people', { skip }, async () => {
+  const reminders = require('../lib/reminders'), scores = require('../lib/scores');
+  const t = await addStaff('Thera Remind', 'therapist'), ct = await staffIn(t.email, '10.84.1.1');
+  await add(ct, { name: 'Weekly One', email: em('wk1'), reminder_dow: '3' }); await add(ct, { name: 'Weekly Off', email: em('wkoff'), reminder_dow: '3' });
+  await q(`UPDATE clinical.clients SET reminders_on=false WHERE email=$1`, [em('wkoff')]);
+  const wed10 = new Date('2027-03-10T10:00:00Z'), wed08 = new Date('2027-03-10T08:00:00Z'), thu10 = new Date('2027-03-11T10:00:00Z');   // 10 March 2027 is a Wednesday (reminder_dow 3)
+  const mine = (to, re) => mail.outbox.filter(x => x.to === to && re.test(x.subject));
+  await reminders.run(wed08); assert.equal(mine(em('wk1'), /weekly/i).length, 0);                                 // too early in the day
+  await reminders.run(thu10); assert.equal(mine(em('wk1'), /weekly/i).length, 0);                                 // wrong day
+  await reminders.run(wed10); assert.equal(mine(em('wk1'), /weekly check-in/i).length, 1);
+  await reminders.run(wed10); await reminders.run(new Date('2027-03-10T15:00:00Z')); assert.equal(mine(em('wk1'), /weekly check-in/i).length, 1);   // never twice in a week
+  assert.equal(mine(em('wkoff'), /weekly/i).length, 0);                                                            // reminders off
+  assert.ok(!/therapy|hypno|anxiety/i.test(mine(em('wk1'), /weekly/)[0].html.replace(/Hi [^<]*|hypnotherapy/gi, '')));   // nothing clinical in the email
+  assert.equal(mine(em('wk1'), /weekly/)[0].from, null);                                                           // practice sender (no own address set)
+  // already scored this week: no prompt
+  await add(ct, { name: 'Weekly Done', email: em('wkdone'), reminder_dow: '3' });
+  const did = await idOf(em('wkdone')); await q(`INSERT INTO clinical.weekly_scores (client_id, week_start, score) VALUES ($1,$2,6)`, [did, scores.weekStart(wed10)]);
+  await reminders.run(new Date('2027-03-10T11:00:00Z')); assert.equal(mine(em('wkdone'), /weekly/i).length, 0);
+  // appointment reminder the day before; not for far-off or past ones; once; moving it sends a fresh one
+  const wk1 = await idOf(em('wk1'));
+  const ins = at => q(`INSERT INTO clinical.appointments (client_id, starts_at, status) VALUES ($1,$2,'booked') RETURNING id`, [wk1, at]).then(r => r[0].id);
+  const near = await ins(new Date('2027-03-11T14:00:00Z')); await ins(new Date('2027-03-20T14:00:00Z'));
+  await reminders.run(new Date('2027-03-10T15:00:00Z'));
+  assert.equal(mine(em('wk1'), /Reminder: your appointment/).length, 1); assert.match(mine(em('wk1'), /Reminder: your appointment/)[0].html, /March 2027|11/);
+  await reminders.run(new Date('2027-03-10T16:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: your appointment/).length, 1);
+  await q(`UPDATE clinical.appointments SET starts_at='2027-03-11T16:00:00Z', ics_sequence=ics_sequence+1 WHERE id=$1`, [near]);
+  await reminders.run(new Date('2027-03-10T17:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: your appointment/).length, 2);
+  // unsigned form: 3 days then 7 days, a new working link each time, none once signed
+  await q(`INSERT INTO documents.forms (therapist_id, client_id, template_id, template_name, audience, rendered, content_sha256, sent_to, token_hash, token_expires_at, status, sent_at)
+           SELECT $1, $2, id, name, audience, '{"title":"T","signer_fields":[],"choices":[],"paragraphs":[]}'::jsonb, 'x', $3, 'oldhash', now() + interval '30 days', 'sent', '2027-03-01T10:00:00Z' FROM core.form_templates WHERE audience='adult' LIMIT 1`, [t.id, wk1, em('wk1')]);
+  const fid = (await q(`SELECT id FROM documents.forms WHERE client_id=$1 AND status='sent'`, [wk1]))[0].id;
+  await reminders.run(new Date('2027-03-03T10:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: a form/).length, 0);                // only 2 days
+  await reminders.run(new Date('2027-03-04T11:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: a form/).length, 1);                // 3 days
+  const link = mine(em('wk1'), /Reminder: a form/)[0].html.match(/\/sign\/([a-f0-9]+)/); assert.ok(link);
+  assert.notEqual((await q(`SELECT token_hash FROM documents.forms WHERE id=$1`, [fid]))[0].token_hash, 'oldhash');
+  await reminders.run(new Date('2027-03-05T11:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: a form/).length, 1);
+  await reminders.run(new Date('2027-03-08T11:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: a form/).length, 2);                // 7 days
+  await reminders.run(new Date('2027-03-20T11:00:00Z')); assert.equal(mine(em('wk1'), /Reminder: a form/).length, 2);                // then left alone
+  // digest: weekday morning, counts only, once a day, silent when nothing to say
+  const dg0 = await addStaff('Thera Digest', 'therapist'), cd = await staffIn(dg0.email, '10.84.1.2');
+  await cd.post('/therapist/enquiries/add', { type: 'adult', first_name: 'Dig', last_name: 'Est', phone: '07700900333' });
+  await reminders.run(new Date('2027-03-17T06:00:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 0);                         // too early
+  await reminders.run(new Date('2027-03-17T08:00:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 1);
+  const dg = mine(dg0.email, /Your day/)[0].html; assert.match(dg, /1 new enquiry waiting/); assert.ok(!dg.includes('Dig Est') && !dg.includes('07700'));
+  await reminders.run(new Date('2027-03-17T09:30:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 1);                         // once a day
+  await reminders.run(new Date('2027-03-20T09:00:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 1);                         // Saturday: none
+  await reminders.run(new Date('2027-03-18T09:00:00Z')); assert.equal(mine(dg0.email, /Your day/).length, 2);                         // next weekday
+  const lonely = await addStaff('Thera Quiet', 'therapist'); await reminders.run(new Date('2027-03-19T09:00:00Z')); assert.equal(mine(lonely.email, /Your day/).length, 0);   // nothing to report
 });
