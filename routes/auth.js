@@ -50,7 +50,7 @@ router.post('/staff/request-code', async (req, res) => {
 
 const enter = (req, res, staff) =>
   startSession(req, res, { staffId: staff.id, role: staff.role }, 'staff.signed_in', { actorType: 'staff', actorId: staff.id, detail: { role: staff.role } })
-    .then(() => res.redirect(landing(staff.role)));
+    .then(() => { const back = staff.role === 'therapist' && req.signedCookies && req.signedCookies.appnext; if (back) res.clearCookie('appnext'); res.redirect(back ? '/therapist/enquiries/new' : landing(staff.role)); });
 
 router.post('/staff/verify', async (req, res) => {
   const email = norm(req.body.email);

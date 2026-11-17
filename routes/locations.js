@@ -45,6 +45,14 @@ router.post('/practice/sources', pm, async (req, res) => {
   const again = async msg => res.status(400).send(V.sourcesPage(await srcs(), msg, false));
   const id = Number(b.id) || 0;
   if (b.action === 'retire' || b.action === 'restore') { await q(`UPDATE core.referral_sources SET active=$2 WHERE id=$1`, [id, b.action === 'restore']); await audit(req, `source.${b.action}`, { ...who, subjectId: id }); return res.redirect('/practice/sources?msg=saved'); }
+  if (b.action === 'delete') {   // removing is only for a source nobody has used; otherwise stop offering it so the records keep their answer
+    const r = await one(`SELECT name FROM core.referral_sources WHERE id=$1`, [id]);
+    if (!r) return again('That source no longer exists.');
+    const used = (await one(`SELECT (SELECT count(*) FROM clinical.enquiries WHERE heard_from=$1) + (SELECT count(*) FROM clinical.clients WHERE heard_from=$1) AS n`, [r.name])).n;
+    if (Number(used) > 0) return again(`${r.name} is used by ${used} record${Number(used) === 1 ? '' : 's'}, so it cannot be deleted. Use "Stop offering" and it will no longer appear in the list.`);
+    await q(`DELETE FROM core.referral_sources WHERE id=$1`, [id]); await audit(req, 'source.deleted', { ...who, subjectId: id });
+    return res.redirect('/practice/sources?msg=saved');
+  }
   if (!name) return again('Enter a name.');
   try {
     if (id) {

@@ -57,8 +57,9 @@ main.read form,main.wide form{max-width:560px}
   // the active item is the one whose address is the longest match for this page
   const here = links.filter(i => (i.exact ? ctx.path === i.href : ctx.path === i.href || ctx.path.startsWith(i.href + '/'))).sort((a, b) => b.href.length - a.href.length)[0];
   const menu = items.map(i => i.group ? `<p class="grp">${esc(i.group)}</p>` : `<a class="item${i === here ? ' on' : ''}" href="${esc(i.href)}"${i === here ? ' aria-current="page"' : ''}>${esc(i.label)}</a>`).join('');
+  const appHead = ctx.role === 'therapist' ? `<link rel="manifest" href="/app/manifest.webmanifest"><meta name="theme-color" content="${esc(BRAND.colorPrimary)}"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Enquiries"><link rel="apple-touch-icon" href="/app/icon-180.png"><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/app/sw.js').catch(function(){})</script>` : '';
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">${appHead}<title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
 <style>${css}
 .app{display:flex;min-height:100vh}
 .side{width:236px;flex:none;background:#fff;border-right:1px solid #e3e8e8;position:sticky;top:0;height:100vh;box-sizing:border-box;padding:20px 12px;display:flex;flex-direction:column;overflow-y:auto}
@@ -582,10 +583,10 @@ function enquiryManual(f = {}, msg, srcs = []) {
 }
 
 function sourcesPage(rows, msg, ok) {
-  return wide('Where clients come from', `<p style="margin:0 0 4px"><strong style="font-size:22px">Where clients come from</strong></p><p class="muted" style="margin:0">The answers to "how did you hear about us". Therapists pick from this list when they enter an enquiry, and can type a new one, such as an osteopath who refers clients. It is added here for everyone. You see counts only, never names.</p>${note(msg, ok)}
+  return wide('Where clients come from', `<p style="margin:0 0 4px"><strong style="font-size:22px">Where clients come from</strong></p><p class="muted" style="margin:0">The answers to "how did you hear about us". Therapists pick from this list when they enter an enquiry, and can type a new one, such as an osteopath who refers clients. It is added here for everyone. Add or remove sources as you need: a source that has been used can be stopped (it stays on the records that have it), and one that has never been used can be deleted. You see counts only, never names.</p>${note(msg, ok)}
 <div class="grid">${rows.map(r => `<section class="card"><h2>${esc(r.name)} <span class="pill ${r.active ? '' : 'off'}">${r.active ? 'In the list' : 'Not offered'}</span></h2>
 <p class="muted">${r.n} enquir${r.n === 1 ? 'y' : 'ies'} so far</p>
-<form method="post" action="/practice/sources"><input type="hidden" name="id" value="${r.id}"><label for="s${r.id}">Name</label><input id="s${r.id}" name="name" maxlength="100" value="${esc(r.name)}"><button class="alt" name="action" value="rename">Rename</button> <button class="alt" name="action" value="${r.active ? 'retire' : 'restore'}">${r.active ? 'Stop offering' : 'Offer again'}</button></form></section>`).join('')}
+<form method="post" action="/practice/sources"><input type="hidden" name="id" value="${r.id}"><label for="s${r.id}">Name</label><input id="s${r.id}" name="name" maxlength="100" value="${esc(r.name)}"><button class="alt" name="action" value="rename">Rename</button> <button class="alt" name="action" value="${r.active ? 'retire' : 'restore'}">${r.active ? 'Stop offering' : 'Offer again'}</button>${r.n ? '' : ' <button class="alt" name="action" value="delete">Delete</button>'}</form></section>`).join('')}
 <section class="card"><h2>Add a source</h2><form method="post" action="/practice/sources"><label for="sn">Name</label><input id="sn" name="name" required maxlength="100"><button>Add</button></form></section></div>`);
 }
 

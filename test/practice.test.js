@@ -572,3 +572,32 @@ test('the practice list of sources, and who referred them', { skip }, async () =
   const cl = (await q(`SELECT heard_from, referrer_name FROM clinical.clients WHERE therapist_id=$1 AND name='Ref Erred'`, [t.id]))[0];
   assert.deepEqual(cl, { heard_from: 'Referral', referrer_name: 'Jo Bloggs' });
 });
+
+test('phone app: installable manifest and icons, opens the enquiry form, returns there after sign-in; sources can be deleted only when unused', { skip }, async () => {
+  const m = await fetch(base + '/app/manifest.webmanifest'); assert.equal(m.status, 200);
+  const man = await m.json(); assert.equal(man.start_url, '/app/enquiry'); assert.equal(man.display, 'standalone'); assert.ok(man.icons.length >= 2);
+  for (const s of [180, 192, 512]) { const r = await fetch(`${base}/app/icon-${s}.png`); assert.equal(r.headers.get('content-type'), 'image/png'); const b = Buffer.from(await r.arrayBuffer()); assert.equal(b.slice(1, 4).toString(), 'PNG'); assert.equal(b.readUInt32BE(16), s); }
+  assert.equal((await fetch(base + '/app/icon-999.png')).status, 404);
+  assert.match(await (await fetch(base + '/app/sw.js')).text(), /fetch/);
+  const t = await addStaff('Thera Phone', 'therapist');
+  // not signed in: goes to sign-in, then back to the form
+  const c = client('10.83.1.1'); assert.equal((await c.get('/app/enquiry')).loc, '/staff/therapist');
+  await c.post('/staff/request-code', { email: t.email });
+  const v = await c.post('/staff/verify', { email: t.email, code: last(t.email, /sign-in code/).html.match(/>(\d{6})</)[1] });
+  assert.equal(v.loc, '/therapist/enquiries/new');
+  assert.match((await c.get('/therapist/enquiries/new')).text, /rel="manifest"/);                      // the page can be installed from
+  assert.equal((await c.get('/app/enquiry')).loc, '/therapist/enquiries/new');                           // signed in: straight to the form
+  // normal sign-in is unchanged
+  const c2 = client('10.83.1.2'); await c2.post('/staff/request-code', { email: t.email });
+  assert.equal((await c2.post('/staff/verify', { email: t.email, code: last(t.email, /sign-in code/).html.match(/>(\d{6})</)[1] })).loc, '/therapist');
+  // sources: delete an unused one, not a used one
+  const p = await addStaff('Mgr Phone', 'practice_manager'), cp = await staffIn(p.email, '10.83.1.3');
+  await cp.post('/practice/sources', { name: 'Temp Source ' + run });
+  const id = (await q(`SELECT id FROM core.referral_sources WHERE name=$1`, ['Temp Source ' + run]))[0].id;
+  assert.equal((await cp.post('/practice/sources', { id: String(id), action: 'delete' })).loc, '/practice/sources?msg=saved');
+  assert.equal((await q(`SELECT 1 FROM core.referral_sources WHERE id=$1`, [id])).length, 0);
+  const fb = (await q(`SELECT id FROM core.referral_sources WHERE name='Facebook'`))[0].id;
+  await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, phone, heard_from) VALUES ($1,'phone',false,'Uses FB','07000',$2)`, [t.id, 'Facebook']);
+  const r = await cp.post('/practice/sources', { id: String(fb), action: 'delete' }); assert.equal(r.status, 400); assert.match(r.text, /cannot be deleted/);
+  assert.equal((await q(`SELECT 1 FROM core.referral_sources WHERE id=$1`, [fb])).length, 1);
+});
