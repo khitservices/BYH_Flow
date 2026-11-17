@@ -341,12 +341,13 @@ router.get('/journal/score', myClient, async (req, res) => {
   const c = await one(`SELECT c.name, c.status, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [req.session.client.id]);
   if (!scoreOK(c)) return res.redirect('/journal');
   const m = { saved: ['Saved. Thank you.', true], bad: ['Choose a score from 1 to 10.', false] }[String(req.query.msg || '')] || [];
-  res.send(V.clientScorePage({ who: c.name, therapist: c.therapist, series: await scores.series(req.session.client.id) }, m[0], m[1]));
+  const series = await scores.series(req.session.client.id);
+  res.send(V.clientScorePage({ who: c.name, therapist: c.therapist, series, note: series[series.length - 1].note }, m[0], m[1]));
 });
 router.post('/journal/score', myClient, async (req, res) => {
   const id = req.session.client.id, c = await one(`SELECT status FROM clinical.clients WHERE id=$1`, [id]);
   if (!scoreOK(c)) return res.redirect('/journal');
-  res.redirect(`/journal/score?msg=${(await scores.save(id, req.body.score)) ? 'saved' : 'bad'}`);
+  res.redirect(`/journal/score?msg=${(await scores.save(id, req.body.score, req.body.note)) ? 'saved' : 'bad'}`);
 });
 router.get('/journal/sessions', myClient, async (req, res) => {
   const [msg, ok] = CMSG[String(req.query.msg || '')] || [];

@@ -481,15 +481,16 @@ test('weekly score: one per week, editable within the week, gaps shown, client a
   assert.equal((await cl.post('/journal/score', { score: '11' })).loc, '/journal/score?msg=bad');
   assert.equal((await cl.post('/journal/score', { score: '0' })).loc, '/journal/score?msg=bad');
   assert.equal((await cl.post('/journal/score', { score: '4' })).loc, '/journal/score?msg=saved');
-  assert.equal((await cl.post('/journal/score', { score: '7' })).loc, '/journal/score?msg=saved');                  // changed, not duplicated
+  assert.equal((await cl.post('/journal/score', { score: '7', note: 'Slept better <b>this</b> week' })).loc, '/journal/score?msg=saved');                  // changed, not duplicated
   assert.deepEqual((await q(`SELECT score FROM clinical.weekly_scores WHERE client_id=$1`, [id])).map(r => r.score), [7]);
   // an earlier week and a gap between: entered directly
   await q(`INSERT INTO clinical.weekly_scores (client_id, week_start, score) VALUES ($1, $2::date - 21, 3)`, [id, scores.weekStart()]);
   const s = await scores.series(id); assert.equal(s.length, 12); assert.equal(s[11].score, 7); assert.equal(s[10].score, null); assert.equal(s[8].score, 3);
   assert.match((await cl.get('/journal/score')).text, /not entered/);
-  assert.match((await ca.get(`/therapist/client/${id}`)).text, /How they have been feeling/);
+  const rec = (await ca.get(`/therapist/client/${id}`)).text; assert.match(rec, /How they have been feeling/); assert.match(rec, /Slept better &lt;b&gt;this/);    // the note is shown to the therapist, escaped
+  assert.match((await cl.get('/journal/score')).text, /Slept better/);
   assert.equal((await co.get(`/therapist/client/${id}`)).status, 404);                                               // another therapist cannot see the client at all
-  for (const url of ['/practice/stats', '/practice']) { const t = (await cp.get(url)).text; assert.ok(!/How they have been feeling|weekly_scores/.test(t)); }
+  for (const url of ['/practice/stats', '/practice']) { const t = (await cp.get(url)).text; assert.ok(!/How they have been feeling|weekly_scores|Slept better/.test(t)); }
   assert.equal((await cp.get(`/therapist/client/${id}`)).status, 403);
   // also open to people who have only had a consultation
   await add(ca, { name: 'Pre Client', email: em('prec') });
