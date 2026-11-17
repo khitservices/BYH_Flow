@@ -14,6 +14,7 @@ const { book } = require('./sessions');
 const { activeProgrammes, pence } = require('./programmes');
 const { sendForm, activeTemplates } = require('./forms');
 const consult = require('../lib/consult');
+const blocks = require('../lib/blocks');
 const archive = require('../lib/archive');
 
 const router = express.Router();
@@ -29,7 +30,7 @@ const dow = v => (Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 
 // Which session the client is on: sessions had before joining, plus booked sessions already in the past,
 // plus one. A missed week does not move it on; only sessions delivered do. Never more than the programme length.
 const position = (c, held = 0) => !c.programme_sessions ? null : ({ on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions });
-const heldCount = async id => (await one(`SELECT count(*)::int n FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at <= now()`, [id])).n;
+const heldCount = async id => (await one(`SELECT count(*)::int n FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id WHERE a.client_id=$1 AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()`, [id])).n;
 
 // "AND therapist_id" is the access rule: someone else's client is simply not found.
 const own = (req) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(req.params.id) || 0, req.session.staff.id]);
@@ -55,7 +56,7 @@ router.get('/therapist', th, async (req, res) => {
 
 router.get('/therapist/clients', th, async (req, res) => {
   const rows = await q(`SELECT c.*,
-      (SELECT count(*)::int FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at <= now()) AS held,
+      (SELECT count(*)::int FROM clinical.appointments a WHERE a.client_id=c.id AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()) AS held,
       (SELECT min(a.starts_at) FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at > now()) AS next_at,
       EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.change_requested_at IS NOT NULL) AS wants_change
     FROM clinical.clients c WHERE c.therapist_id=$1 AND c.archived_at IS NULL ORDER BY (c.status='closed'), (c.status IN ('active','readonly')), lower(c.name)`, [req.session.staff.id]);
@@ -115,6 +116,7 @@ router.post('/therapist/clients/add', th, async (req, res) => {
     [me.id, f.name, f.email, f.phone || null, f.under16, f.under16 ? f.guardian_name : null, f.under16 ? f.guardian_email || null : null,
      f.under16 ? f.guardian_phone || null : null, consent.status, consent.at, consent.method, consent.note, consent.by,
      f.sessions, f.sessions_before_app, f.reminder_dow, prog.id, prog.name, prog.price_pence, f.sessions > 1]); // one-off sessions start with weekly reminders off
+  await blocks.startBlock(client.id, prog, f.sessions_before_app);
   const who = { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id };
   await audit(req, 'client.created', { ...who, detail: { under16: f.under16 } });
   if (f.under16) await audit(req, 'client.consent_attested', who);
@@ -145,6 +147,8 @@ const MSG = {
   ic_cleared: ['Consultation removed.', true], date: ['Enter a real date and time.', false], attended: ['Marked as attended. The form has been emailed for signing.', true],
   proceeded: ['They are now an active client. Book their sessions from here.', true], nodate: ['Choose a programme first.', false], consent: ['For a client under 16, confirm that a parent or guardian has given consent.', false],
   archived: ['Archived as did not proceed. You can restore them from the archive if they get in touch again.', true], restored: ['Restored. They are back at the consultation stage.', true],
+  block_started: ['New block started. Their earlier blocks are kept, and sessions you book now count against this one.', true],
+  block_open: ['The current block still has sessions to come. Tick "end it early" to start a new block now.', false],
   unknown: ['Unknown action.', false],
 };
 
@@ -155,7 +159,7 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), blocks: await blocks.blocksFor(c.id), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -208,9 +212,8 @@ router.post('/therapist/client/:id', th, async (req, res) => {
       consent = ['granted', isNaN(d) || d > new Date() ? new Date() : d, 'in_person', text(req.body.consent_note, 500) || null, me.id];
     }
     let prior = Number(req.body.sessions_before_app); if (!Number.isInteger(prior) || prior < 0) prior = 0;
-    await q(`UPDATE clinical.clients SET status='active', programme_id=$2, programme_name=$3, programme_sessions=$4, programme_price_pence=$5, sessions_before_app=$6,
-      reminders_on=$7, programme_started_at=now(), consent_status=$8, consent_at=$9, consent_method=$10, consent_note=$11, consent_recorded_by=$12 WHERE id=$1`,
-      [c.id, prog.id, prog.name, prog.sessions, prog.price_pence, Math.min(prior, prog.sessions - 1), prog.sessions > 1, ...consent]);
+    await q(`UPDATE clinical.clients SET consent_status=$2, consent_at=$3, consent_method=$4, consent_note=$5, consent_recorded_by=$6 WHERE id=$1`, [c.id, ...consent]);
+    await blocks.startBlock(c.id, prog, prior);
     if (c.under16) await log('client.consent_attested');
     await log('client.proceeded', { programme: prog.id });
     return done('proceeded');
@@ -248,8 +251,19 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     const add = length(req.body.add_sessions, 6);
     if (c.programme_sessions + add > 60) return done('unknown');
     await q(`UPDATE clinical.clients SET programme_sessions=programme_sessions+$2, status='active', closed_at=NULL WHERE id=$1`, [c.id, add]);
+    await q(`UPDATE clinical.programme_blocks SET sessions=sessions+$2 WHERE id=$1`, [c.current_block_id, add]);
     await log('client.programme_extended', { add });
     return done('extended');
+  }
+  if (action === 'new_block') {
+    if (pre || c.archived_at) return done('unknown');
+    const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [Number(req.body.programme) || 0]);
+    if (!prog) return done('nodate');
+    const held = await heldCount(c.id);
+    if (c.status !== 'closed' && position(c, held) && held + c.sessions_before_app < c.programme_sessions && req.body.end_early !== 'on') return done('block_open');
+    await blocks.startBlock(c.id, prog, 0);
+    await log('client.block_started', { programme: prog.id });
+    return done('block_started');
   }
   if (action === 'reminders') {
     await q(`UPDATE clinical.clients SET reminders_on=$2, reminder_dow=$3 WHERE id=$1`, [c.id, req.body.reminders_on === 'on', dow(req.body.reminder_dow)]);
@@ -277,9 +291,7 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     }
     const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [Number(req.body.programme) || 0]);
     if (!prog) return done('unknown');
-    await q(`UPDATE clinical.clients SET status='active', closed_at=NULL, programme_number=programme_number+1, programme_sessions=$2,
-             sessions_before_app=0, programme_started_at=now(), programme_id=$3, programme_name=$4, programme_price_pence=$5, reminders_on=$6 WHERE id=$1`,
-      [c.id, prog.sessions, prog.id, prog.name, prog.price_pence, prog.sessions > 1]);
+    await blocks.startBlock(c.id, prog, 0);
     await log('client.status_changed', { status: 'active', new_programme: true });
     return done('fresh');
   }

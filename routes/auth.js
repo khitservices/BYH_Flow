@@ -294,8 +294,9 @@ router.get('/journal', A.requireRole('client', '/', V.forbidden), async (req, re
   const c = await one(`SELECT c.*, s.name AS therapist, s.relax_url FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
   const forms = await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND status <> 'void' ORDER BY id`, [id]);
   const next = await one(`SELECT min(starts_at) AS at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now()`, [id]);
-  const held = (await one(`SELECT count(*)::int n FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at <= now()`, [id])).n;
-  res.send(V.clientHome({ who: c.name, therapist: c.therapist, relax: c.relax_url, forms, next: next.at ? T.when(next.at) : null,
+  const held = (await one(`SELECT count(*)::int n FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id WHERE a.client_id=$1 AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()`, [id])).n;
+  const blocks = await require('../lib/blocks').blocksFor(id);
+  res.send(V.clientHome({ who: c.name, blocks, blockName: c.programme_name, therapist: c.therapist, relax: c.relax_url, forms, next: next.at ? T.when(next.at) : null,
     ic: c.ic_at ? T.when(c.ic_at) : null, pre: c.status === 'consultation' || c.status === 'attended',
     pos: c.programme_sessions ? { on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions } : null }));
 });

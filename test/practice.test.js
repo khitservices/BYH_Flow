@@ -255,7 +255,7 @@ test('programmes: the manager keeps the list, a single fixed-price session works
   assert.ok(!(await ct.get('/therapist/clients/add')).text.includes(name));
   assert.equal((await post(ct, '/therapist/clients/add', { name: 'Late Quit', email: em('lq'), programme: prog.id })).status, 400);
   assert.match((await cp.get('/practice')).text, /Programmes and prices/);
-  await q(`UPDATE clinical.clients SET programme_id=NULL WHERE email=$1`, [em('quit')]); await q(`DELETE FROM core.programmes WHERE id=$1`, [prog.id]);
+  await q(`UPDATE clinical.clients SET programme_id=NULL WHERE email=$1`, [em('quit')]); await q(`UPDATE clinical.clients SET current_block_id=NULL WHERE email=$1`, [em('quit')]); await q(`UPDATE clinical.appointments SET block_id=NULL WHERE block_id IN (SELECT id FROM clinical.programme_blocks WHERE programme_id=$1)`, [prog.id]); await q(`DELETE FROM clinical.programme_blocks WHERE programme_id=$1`, [prog.id]); await q(`DELETE FROM core.programmes WHERE id=$1`, [prog.id]);
 });
 
 test('landing pages: each user type gets their own overview, and the manager sees numbers only', { skip }, async () => {
@@ -271,7 +271,7 @@ test('landing pages: each user type gets their own overview, and the manager see
   for (const hidden of ['Hidden Enquirer', 'Secret Clientname', 'Clientname', em('hide')]) assert.ok(!pm.includes(hidden), hidden);
   const cl = await clientIn(em('secretc')); assert.ok(cl);
   const home = (await cl.get('/journal')).text;
-  assert.match(home, /Hello Secret/); assert.match(home, /Your next session/); assert.match(home, /20 September 2027 at 10:00/); assert.match(home, /Session 1 of 8/); assert.match(home, /Your client area with Thera Home/);
+  assert.match(home, /Hello Secret/); assert.match(home, /Your next session/); assert.match(home, /20 September 2027 at 10:00/); assert.match(home, /[Ss]ession 1 of 8/); assert.match(home, /Your client area with Thera Home/);
   assert.equal((await cl.get('/practice')).status, 403); assert.equal((await cl.get('/therapist')).status, 403);
   const list = (await ct.get('/therapist/enquiries')).text; assert.match(list, /Book the initial consultation/); assert.ok(!list.includes('Mark as proceeding'));
 });
@@ -282,4 +282,29 @@ test('cleanse script refuses to run without the exact confirmation', async () =>
     const r = spawnSync(process.execPath, ['scripts/cleanse.js', ...args], { encoding: 'utf8', env: { ...process.env, DATABASE_URL: 'postgres://nobody@127.0.0.1:1/none' } });
     assert.notEqual(r.status, 0); assert.match(r.stderr, /usage: cleanse\.js/);
   }
+});
+
+test('blocks of sessions: a further block or a standalone session is kept distinct, counts follow the block, the manager sees counts only', { skip }, async () => {
+  const t = await addStaff('Thera Blocks', 'therapist'), p = await addStaff('Mgr Blocks', 'practice_manager');
+  const ct = await staffIn(t.email), cp = await staffIn(p.email);
+  const name = 'Cessation ' + run;
+  await post(cp, '/practice/programmes', { name, sessions: '1', price: '75' });
+  const single = (await q(`SELECT * FROM core.programmes WHERE name=$1`, [name]))[0];
+  await add(ct, { name: 'Blocky Client', email: em('blocky'), sessions: '6' });
+  const id = await idOf(em('blocky'));
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.programme_blocks WHERE client_id=$1`, [id]))[0].n, 1);
+  // two sessions held in block 1; a new block needs the current one ended
+  await post(ct, '/therapist/book', { client_id: id, date: '2026-01-05', time: '10:00' }); await post(ct, '/therapist/book', { client_id: id, date: '2026-01-12', time: '10:00' });
+  assert.equal((await post(ct, `/therapist/client/${id}`, { action: 'new_block', programme: single.id })).loc, `/therapist/client/${id}?msg=block_open`);
+  assert.equal((await post(ct, `/therapist/client/${id}`, { action: 'new_block', programme: single.id, end_early: 'on' })).loc, `/therapist/client/${id}?msg=block_started`);
+  const bl = await q(`SELECT * FROM clinical.programme_blocks WHERE client_id=$1 ORDER BY number`, [id]);
+  assert.equal(bl.length, 2); assert.ok(bl[0].ended_at); assert.equal(bl[1].sessions, 1); assert.equal(bl[1].price_pence, 7500);
+  const c2 = (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [id]))[0]; assert.equal(c2.programme_sessions, 1); assert.equal(c2.programme_number, 2);
+  // the new session counts against block 2; block 1's two sessions stay with block 1
+  await post(ct, '/therapist/book', { client_id: id, date: '2026-02-02', time: '10:00' });
+  const by = await q(`SELECT block_id, count(*)::int n FROM clinical.appointments WHERE client_id=$1 GROUP BY 1 ORDER BY 1`, [id]);
+  assert.deepEqual(by.map(r => r.n), [2, 1]); assert.equal(Number(by[1].block_id), Number(bl[1].id));
+  const rec = (await ct.get(`/therapist/client/${id}`)).text; assert.match(rec, /Block 1/); assert.match(rec, new RegExp(`Block 2: ${name}`)); assert.match(rec, /Start a further block/);
+  const cl = await clientIn(em('blocky')); const home = (await cl.get('/journal')).text; assert.match(home, new RegExp(`${name}: session 1 of 1`)); assert.match(home, /Earlier:/);
+  const pm = (await cp.get('/practice/stats')).text; assert.match(pm, new RegExp(name)); assert.ok(!pm.includes('Blocky'));
 });

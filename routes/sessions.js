@@ -47,7 +47,7 @@ async function book(req, client, date, time) {
   const at = T.fromLocal(date, time);
   if (!at) return { error: 'date' };
   if (client.status !== 'active') return { error: 'inactive' };
-  const [a] = await q(`INSERT INTO clinical.appointments (client_id, starts_at) VALUES ($1,$2) RETURNING *`, [client.id, at]);
+  const [a] = await q(`INSERT INTO clinical.appointments (client_id, starts_at, block_id) VALUES ($1,$2,(SELECT current_block_id FROM clinical.clients WHERE id=$1)) RETURNING *`, [client.id, at]);
   await audit(req, 'session.booked', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'client', subjectId: client.id });
   const future = at > new Date();
   return { appt: a, msg: !future ? 'recorded' : ((await notify(a, client, 'booked')) ? 'booked' : 'booked_nomail') };

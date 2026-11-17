@@ -234,3 +234,10 @@
 - Clients at the consultation stage can sign in (forms, consultation date); programme, reminders and sessions are not offered until Active.
 - **Archive.** Enquiries archived by hand or untouched for 60 days, and clients marked **Did not proceed**, are kept (not deleted) and leave the working lists. A returning person (same email or phone) is matched against the *same therapist's* archive only; the therapist confirms with one click and the old record is restored (no duplicate). Archived clients cannot sign in. The manager sees archive counts only.
 - Parked: auto-archive of long-quiet Consultation-stage clients; practice-wide matching across therapists (deliberately not done: would reveal one therapist's records to another).
+
+## Blocks of sessions (decided 17 Nov 2026)
+- A client can book a block, then further blocks, or a standalone single session (a 1-session programme). Each is a distinct **block** (own programme name, session count, price, history); **one is current at a time**. No new forms by default.
+- Starting a further block needs the current one finished, or "end it early" ticked. Earlier blocks are kept; sessions booked afterwards belong to the new block, and "session N of M" counts within the current block only.
+- Therapist record lists every block; the client area shows the current block and the names of earlier ones.
+- Practice manager sees counts only by programme name: blocks started, sessions delivered, clients on a second or later block, standalone single sessions. No names, no per-client prices. (Income totals: not wanted for now.)
+- Parked: two blocks running at once.
