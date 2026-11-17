@@ -143,6 +143,7 @@ ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? `
 ${closed ? '' : post('invite', '<button class="alt">Send invitation again</button>')}`)}
 ${c.under16 ? sec('Consent (under 16)', `<p class="muted" style="margin:0">Parent or guardian: ${esc(c.guardian_name)}${c.guardian_email ? ` · ${esc(c.guardian_email)}` : ''}${c.guardian_phone ? ` · ${esc(c.guardian_phone)}` : ''}<br>
 Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}</p>`) : ''}
+${sec('Forms', `${formsBlock(c.forms || [], 'therapist') || '<p class="muted" style="margin:0">No forms sent yet.</p>'}${closed || !(c.templates || []).length ? '' : `<details><summary>Send a form</summary>${post('send_form', `${templateSelect('c', c.templates)}${feeInput('c', c.fee_pence)}${formatSelect('c')}<button>Send for signing</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} The signed copy is kept here.</p></details>`}`)}
 ${closed ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
 ${closed ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
@@ -217,6 +218,13 @@ function therapistAccount(me, mine, colleagues, msg, ok) {
   const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
   const post = (action, inner) => `<form method="post" action="/therapist/account"><input type="hidden" name="action" value="${action}">${inner}</form>`;
   return page('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
+${sec('My details (used on forms)', `<p class="muted" style="margin:0">Filled into the forms you send, such as the agreement. Leave blank anything you do not want shown.</p>
+${post('details', `<label for="dq">Qualifications</label><input id="dq" name="qualifications" maxlength="200" value="${esc(me.qualifications)}">
+<label for="da">Address</label><input id="da" name="address" maxlength="200" value="${esc(me.address)}">
+<label for="dp">Postcode</label><input id="dp" name="postcode" maxlength="20" value="${esc(me.postcode)}">
+<label for="dh">Phone</label><input id="dh" name="phone" maxlength="40" value="${esc(me.phone)}">
+<label for="df">Usual fee per session in pounds</label><input id="df" name="default_fee" inputmode="decimal" value="${me.default_fee_pence == null ? '' : (me.default_fee_pence / 100).toFixed(2).replace(/\.00$/, '')}">
+<button class="alt">Save my details</button>`)}`)}
 ${sec('Relaxation link', `<p class="muted" style="margin:0">A recording or page you want your clients to be able to open from their client area. Leave blank for none.</p>
 ${post('relax', `<label for="rx">Web address</label><input id="rx" name="relax_url" inputmode="url" placeholder="https://" value="${esc(me.relax_url)}"><button class="alt">Save link</button>`)}`)}
 ${sec('Hand clients over to a colleague', !mine.length ? '<p class="muted" style="margin:0">You have no clients to hand over.</p>'
@@ -281,7 +289,7 @@ function practiceStats(st) {
 
 // ---------- enquiries ----------
 const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Entered by therapist' };
-const STAGE = { new: 'New', consultation: 'Consultation set', proceeding: 'Proceeding', not_proceeding: 'Not proceeding', converted: 'Now a client' };
+const STAGE = { new: 'New', consultation: 'Consultation set', attended: 'Attended', proceeding: 'Proceeding', not_proceeding: 'Not proceeding', converted: 'Now a client' };
 
 function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) {
   const who = therapist
@@ -311,6 +319,8 @@ function therapistEnquiries(rows, links, msg, ok) {
 ${e.stage === 'converted' ? '' : `<details><summary>Manage</summary>
 ${post(e.id, 'consult', `<label for="d${e.id}">Consultation date</label><input id="d${e.id}" name="date" type="date" required value="${e.ic_at ? T.inputDate(e.ic_at) : ''}"><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="${e.ic_at ? T.timeShort(e.ic_at) : '10:00'}"><button class="alt">${e.ic_at ? 'Move consultation' : 'Set consultation'}${e.email ? ' and email them' : ''}</button>`)}
 ${e.ic_at ? post(e.id, 'clear_consult', '<button class="alt">Remove consultation</button>') : ''}
+${formsBlock(e.forms || [], 'therapist')}
+${(e.templates || []).length ? `<details open><summary>${e.stage === 'attended' || (e.forms || []).length ? 'Send the form again' : 'Mark as attended and send forms'}</summary>${post(e.id, 'attended', `${templateSelect(e.id, e.templates)}${feeInput(e.id, e.fee_pence)}${formatSelect(e.id)}<button>${(e.forms || []).length ? 'Send again' : 'Attended: send for signing'}</button>`)}<p class="muted">${e.for_child ? 'It goes to the parent or guardian.' : 'It goes to the person who enquired.'} They read and sign it in the app, and the signed copy is kept with this enquiry and then their client record.</p></details>` : '<p class="muted">No forms are set up for this kind of enquiry yet.</p>'}
 ${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
 ${e.stage !== 'proceeding' ? post(e.id, 'proceeding', '<button class="alt">Mark as proceeding</button>') : ''}
 ${e.stage !== 'not_proceeding' ? post(e.id, 'not_proceeding', '<button class="alt">Not proceeding</button>') : post(e.id, 'new', '<button class="alt">Reopen</button>')}
@@ -368,4 +378,70 @@ ${rows.map(card).join('')}
 <label for="ap">Price in pounds (optional)</label><input id="ap" name="price" inputmode="decimal"><button>Add programme</button></form><p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+// ---------- forms ----------
+const FORM_STATUS = { sent: 'Sent, not yet signed', signed: 'Signed', void: 'Replaced' };
+function signPage(r, action, error, f = {}, back, preview) {
+  const lab = { address: 'Address', phone: 'Contact number', relationship: 'Relationship to the child' };
+  const choice = c => c.type === 'yesno'
+    ? `<fieldset style="border:0;padding:0;margin:12px 0"><legend>${esc(c.label)}</legend><label class="check"><input type="radio" name="choice_${c.key}" value="yes" ${f['choice_' + c.key] === 'yes' ? 'checked' : ''}> Yes</label><label class="check"><input type="radio" name="choice_${c.key}" value="no" ${f['choice_' + c.key] === 'no' ? 'checked' : ''}> No</label></fieldset>`
+    : `<label class="check"><input type="checkbox" name="choice_${c.key}" ${f['choice_' + c.key] ? 'checked' : ''}> ${esc(c.label)}</label>`;
+  return page(r.title, `<p><strong style="font-size:20px">${esc(r.title)}</strong></p>${preview ? '<p class="muted">Preview only. Nothing can be signed here.</p>' : ''}
+${r.intro.map((p, i) => i === 0 ? `<p><strong>${esc(p)}</strong></p>` : `<p>${esc(p)}</p>`).join('')}
+${r.sections.map(x => `<h3 style="margin:18px 0 4px">${esc(x.heading)}</h3>${x.paragraphs.map(p => `<p style="margin:6px 0">${esc(p)}</p>`).join('')}`).join('')}
+<section style="border-top:2px solid #ddd;margin-top:20px;padding-top:12px"><h3 style="margin:0 0 6px">Sign</h3>${r.signing_intro ? `<p>${esc(r.signing_intro)}</p>` : ''}${note(error, false)}
+<form method="post" action="${esc(action)}">
+<label for="sn">Your full name (this is your signature)</label><input id="sn" name="signer_name" required maxlength="100" autocomplete="name" value="${esc(f.signer_name)}">
+${r.signer_fields.map(k => `<label for="s_${k}">${lab[k]}</label><input id="s_${k}" name="signer_${k}" required maxlength="${k === 'address' ? 300 : 100}" value="${esc(f['signer_' + k])}">`).join('')}
+${r.choices.map(choice).join('')}
+${r.closing.map(p => `<p class="muted">${esc(p)}</p>`).join('')}
+<label class="check"><input type="checkbox" name="agree" ${f.agree ? 'checked' : ''}> I have read this and I agree. Typing my name above is my signature.</label>
+<button ${preview ? 'disabled' : ''}>Sign</button></form></section>
+${r.footer.length ? `<p class="muted" style="margin-top:20px">${r.footer.map(esc).join('<br>')}</p>` : ''}${back ? `<p><a href="${esc(back)}">Back</a></p>` : ''}`);
+}
+const signGone = msg => page('Form', `<p>${esc(msg || 'This link is no longer valid. It may have expired, been replaced by a newer one, or the form may already be signed. Please ask your therapist to send it again.')}</p>`);
+const signDone = (title, publicLink) => page('Signed', `<p><strong>Thank you. ${esc(title)} is signed.</strong></p><p>A copy has been emailed to you${publicLink ? '' : ', and you can open it again from your client area'}.</p>${publicLink ? '' : '<p><a href="/journal">Back to your area</a></p>'}`);
+
+// A client's forms, shown in the therapist's client record and enquiry card, and in the client area.
+function formsBlock(forms, who) {
+  if (!forms.length) return '';
+  const row = f => `<li>${esc(f.template_name)}: <span class="muted">${esc(FORM_STATUS[f.status])}${f.signed_at ? ' ' + day(f.signed_at) : f.sent_at ? ', sent ' + day(f.sent_at) : ''}</span>${
+    who === 'therapist' && f.status === 'signed' ? ` · <a href="/therapist/forms/${f.id}/pdf" target="_blank" rel="noopener">Open signed copy</a>` : ''}${
+    who === 'client' && f.status === 'signed' && f.audience === 'adult' ? ` · <a href="/client/forms/${f.id}/pdf" target="_blank" rel="noopener">Open my copy</a>` : ''}${
+    who === 'client' && f.status === 'sent' ? (f.audience === 'adult' ? ` · <a href="/client/forms/${f.id}">Read and sign</a>` : ' · waiting for a parent or guardian to sign') : ''}</li>`;
+  return `<ul style="margin:6px 0;padding-left:18px">${forms.filter(f => f.status !== 'void').map(row).join('')}</ul>`;
+}
+const feeInput = (id, pence) => `<label for="fee${id}">Fee per session in pounds</label><input id="fee${id}" name="fee" inputmode="decimal" required value="${pence == null ? '' : (pence / 100).toFixed(2).replace(/\.00$/, '')}">`;
+const formatSelect = id => `<label for="fmt${id}">Sessions will be</label><select id="fmt${id}" name="session_format" ${sel}><option value="inperson">In person</option><option value="online">Online via Zoom</option></select>`;
+const templateSelect = (id, list) => `<label for="tp${id}">Form</label><select id="tp${id}" name="template" ${sel}>${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>`;
+
+function formTemplates(rows, msg, ok) {
+  return page('Forms', `<p><strong>Forms</strong></p><p class="muted">The forms therapists can send for signing. The Inspired To Change forms are included; add your own for other practices or a standalone practitioner. Wording you change here applies to forms sent from then on; forms already sent keep their wording.</p>${note(msg, ok)}
+${rows.map(t => `<section style="border-top:1px solid #ddd;padding:10px 0"><strong>${esc(t.name)}</strong>${t.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${t.audience === 'child' ? 'Signed by a parent or guardian' : 'Signed by the client'}</span><br>
+<a href="/practice/forms/${t.id}">Edit</a> · <a href="/practice/forms/${t.id}/preview">Preview</a>
+<form method="post" action="/practice/forms/${t.id}" style="display:inline"><input type="hidden" name="action" value="${t.active ? 'retire' : 'restore'}"><button class="alt">${t.active ? 'Retire' : 'Offer again'}</button></form></section>`).join('')}
+<p><a href="/practice/forms/new"><strong>Add a form</strong></a></p><p><a href="/practice">Back</a></p>`);
+}
+function formTemplateEdit(t, F, error) {
+  const f = t.form, sf = f.signer_fields || [];
+  return page('Edit form', `<p><strong>${t.id ? 'Edit form' : 'Add a form'}</strong></p>${note(error, false)}
+<form method="post" action="/practice/forms${t.id ? '/' + t.id : ''}">
+<label for="fn">Name (what therapists see)</label><input id="fn" name="name" required maxlength="100" value="${esc(t.name)}">
+<label for="fa">Who signs it</label><select id="fa" name="audience" ${sel}><option value="adult"${t.audience === 'adult' ? ' selected' : ''}>The client</option><option value="child"${t.audience === 'child' ? ' selected' : ''}>A parent or guardian, for a child</option></select>
+<label for="ft">Title on the form</label><input id="ft" name="title" required maxlength="120" value="${esc(f.title)}">
+<label for="fw">Wording</label><textarea id="fw" name="wording" rows="16" style="width:100%">${esc(f.wording)}</textarea>
+<p class="muted" style="margin:2px 0">A line starting with <code>#</code> begins a section. Text before the first one is the introduction. Leave a blank line between paragraphs. These can be filled in for each client: ${Object.keys(F.MERGE_FIELDS).map(k => `<code>{{${k}}}</code>`).join(' ')}</p>
+<p style="margin:10px 0 2px"><strong>What the signer is asked for</strong> (their name is always asked)</p>
+${['address', 'phone', 'relationship'].map(k => `<label class="check"><input type="checkbox" name="signer_fields" value="${k}" ${sf.includes(k) ? 'checked' : ''}> ${{ address: 'Address', phone: 'Contact number', relationship: 'Relationship to the child' }[k]}</label>`).join('')}
+<label for="fc">Choices (one per line: key | yesno or tick | required or optional | wording)</label><textarea id="fc" name="choices" rows="4" style="width:100%">${esc(f.choices)}</textarea>
+<label for="fs">Line above the signing box (optional)</label><input id="fs" name="signing_intro" maxlength="300" value="${esc(f.signing_intro)}">
+<label for="fl">Closing note (optional)</label><textarea id="fl" name="closing" rows="2" style="width:100%">${esc(f.closing)}</textarea>
+<label for="ff">Details at the end, one per line (optional)</label><textarea id="ff" name="footer" rows="6" style="width:100%">${esc(f.footer)}</textarea>
+<button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
+}
+
+// Client area landing. The journal arrives in the next step; forms are here now.
+function clientHome(name, forms) {
+  return page('Client', `<p>Signed in as <strong>${esc(name)}</strong> (Client).</p><p class="muted">Your journal will appear here.</p>
+${forms.length ? `<p><strong>Your forms</strong></p>${formsBlock(forms, 'client')}` : ''}<p><a href="/logout">Sign out</a></p>`);
+}
+module.exports = { clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

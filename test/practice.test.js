@@ -172,7 +172,7 @@ test('manual enquiry form (from the ITC app): adult and child fields, guardian, 
   const e = await enq('Ben Child');
   assert.equal(e.for_child, true); assert.equal(e.stage, 'consultation'); assert.equal(e.guardian_name, 'Gail Guardian'); assert.equal(e.relationship, 'Aunt'); assert.equal(e.address, '2 Low Road');
   const m = mail.outbox.slice(n).find(x => x.to === em('gail')); assert.ok(m, 'the guardian is emailed, not the child');
-  assert.match(m.html, /Hi Gail/); assert.match(m.html, /10 September 2027 at 15:30/);
+  assert.match(m.html, /Hello Gail/); assert.match(m.html, /10 September 2027 at 15:30/);
   const page = (await c.get('/therapist/enquiries')).text; assert.match(page, /Parent or guardian: Gail Guardian \(Aunt\)/); assert.match(page, /2 Low Road/);
 });
 

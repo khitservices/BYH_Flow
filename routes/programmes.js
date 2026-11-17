@@ -50,4 +50,4 @@ router.post('/practice/programmes/:id', pm, async (req, res) => {
   page(res, 'Saved. Clients already on this programme keep what they were given.', true);
 });
 
-module.exports = { router, activeProgrammes };
+module.exports = { router, activeProgrammes, pence };

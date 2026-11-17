@@ -14,6 +14,8 @@ const T = require('../lib/time');
 const { limited } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
 const V = require('../views/pages');
+const { sendForm, activeTemplates } = require('./forms');
+const { pence } = require('./programmes');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
@@ -75,7 +77,9 @@ const own = req => one(`SELECT * FROM clinical.enquiries WHERE id=$1 AND therapi
 const MSG = {
   added: ['Enquiry added.', true], saved: ['Saved.', true], contact: ['Add an email address or a phone number.', false], name: ['Enter a name.', false], email: ['That email address does not look right.', false],
   consult_set: ['Consultation set. They have been emailed the date and a calendar file.', true], consult_set_nomail: ['Consultation set. No email was sent (no email address on the enquiry, or it could not be sent).', true],
-  consult_cleared: ['Consultation removed.', true], date: ['Enter a real date and time.', false], deleted: ['Enquiry deleted.', true],
+  consult_cleared: ['Consultation removed.', true], form_sent: ['Form sent. They have been emailed a link to read and sign it.', true],
+  form_notsent: ['The form is ready but the email could not be sent. Use Send again once email is working.', false], form_email: ['Add an email address first (the parent or guardian\'s, for a child).', false],
+  form_fee: ['Enter the fee per session, like 60 or 60.50.', false], form_template: ['Choose a form.', false], date: ['Enter a real date and time.', false], deleted: ['Enquiry deleted.', true],
 };
 
 async function tellConsultation(e, kind) { // kind: booked | moved | cancelled. Returns true if an email went.
@@ -89,7 +93,7 @@ async function tellConsultation(e, kind) { // kind: booked | moved | cancelled. 
       organizer: m.from_address ? { name: m.from_name || brand.BRAND.practiceName, email: m.from_address } : null, attendee: { name: who, email: to } })]);
     const when = T.when(e.ic_at);
     await mail.sendMail(to, cancel ? 'Consultation cancelled' : 'Your initial consultation',
-      cancel ? mail.consultationCancelledEmail(who, when) : mail.consultationEmail(who, when, kind === 'moved'), null, { icalEvent: { method: cancel ? 'CANCEL' : 'REQUEST', content } });
+      cancel ? mail.consultationCancelledEmail(who, when) : mail.consultationEmail(who, when, kind === 'moved', (await one(`SELECT name FROM core.staff WHERE id=$1`, [e.therapist_id])).name), null, { icalEvent: { method: cancel ? 'CANCEL' : 'REQUEST', content } });
     return true;
   } catch (err) { console.error('[enquiries] consultation email failed:', err.message); return false; }
 }
@@ -98,7 +102,9 @@ router.get('/therapist/enquiries', th, async (req, res) => {
   const me = req.session.staff, slug = await slugFor(me.id), base = process.env.BASE_URL || '';
   const rows = await q(`SELECT * FROM clinical.enquiries WHERE therapist_id=$1 ORDER BY (stage IN ('not_proceeding','converted')), created_at DESC`, [me.id]);
   const [msg, ok] = MSG[String(req.query.msg || '')] || [];
-  res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows.map(e => ({ ...e, ic_text: e.ic_at ? T.when(e.ic_at) : null })), { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
+  const forms = await q(`SELECT id, enquiry_id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE therapist_id=$1 AND enquiry_id IS NOT NULL ORDER BY id`, [me.id]);
+  const tpl = await activeTemplates(), mine = await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id]);
+  res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows.map(e => ({ ...e, ic_text: e.ic_at ? T.when(e.ic_at) : null, forms: forms.filter(f => f.enquiry_id === e.id), templates: tpl.filter(t => t.audience === (e.for_child ? 'child' : 'adult')), fee_pence: mine.default_fee_pence })), { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
 });
 
 // The full enquiry form the therapist fills in themselves (from the ITC contact app): adult or child,
@@ -135,6 +141,16 @@ router.post('/therapist/enquiries/:id', th, async (req, res) => {
   const done = msg => res.redirect(`/therapist/enquiries?msg=${msg}`), b = req.body, action = String(b.action || '');
   const log = (what, detail) => audit(req, what, { actorType: 'staff', actorId: me.id, subjectType: 'enquiry', subjectId: e.id, detail });
   if (e.stage === 'converted' && action !== 'delete') return done('saved');
+  if (action === 'attended' || action === 'send_form') {
+    const fee = pence(b.fee);
+    if (fee == null) return done('form_fee');
+    try {
+      const r = await sendForm({ therapistId: me.id, templateId: b.template, enquiry: e, fee_pence: fee, session_format: b.session_format === 'online' ? 'online' : 'inperson', req });
+      if (action === 'attended' || e.stage === 'consultation' || e.stage === 'new') await q(`UPDATE clinical.enquiries SET stage='attended' WHERE id=$1 AND stage IN ('new','consultation')`, [e.id]);
+      await log('enquiry.attended', { form: r.id });
+      return done(r.sent ? 'form_sent' : 'form_notsent');
+    } catch (err) { if (err.code === 'email') return done('form_email'); if (err.code === 'template') return done('form_template'); throw err; }
+  }
   if (action === 'notes') { await q(`UPDATE clinical.enquiries SET notes=$2 WHERE id=$1`, [e.id, text(b.notes, 1000) || null]); return done('saved'); }
   if (action === 'consult') {
     const at = T.fromLocal(b.date, b.time);

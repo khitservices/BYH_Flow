@@ -147,6 +147,7 @@ router.get('/practice', pm, async (req, res) => {
   res.send(V.shell(req.session.staff.name, 'Practice manager', 'Set up the practice and manage the team here. Client records are not available in this account.', [
     { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
     { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
+    { href: '/practice/forms', label: 'Forms (agreements and consent forms)' },
     { href: '/practice/programmes', label: 'Programmes and prices (for example a single fixed-price session)' },
     { href: '/practice/stats', label: 'Practice statistics (numbers only)' },
     { href: '/practice/team', label: 'Team (add or remove therapists and managers)' },
@@ -292,7 +293,9 @@ router.post('/practice/settings/email', pm, async (req, res) => {
   again('Saved.', true);
 });
 
-router.get('/journal', A.requireRole('client', '/', V.forbidden), (req, res) =>
-  res.send(V.shell(req.session.client.name, 'Client', 'Your journal will appear here.')));
+router.get('/journal', A.requireRole('client', '/', V.forbidden), async (req, res) => {
+  const forms = await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND status <> 'void' ORDER BY id`, [req.session.client.id]);
+  res.send(V.clientHome(req.session.client.name, forms));
+});
 
 module.exports = router;

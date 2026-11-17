@@ -13,6 +13,7 @@ const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
 
 const MSG = {
+  details_saved: ['Your details are saved.', true], details_fee: ['Enter the fee like 60 or 60.50.', false],
   relax_saved: ['Relaxation link saved.', true], relax_cleared: ['Relaxation link removed.', true], relax_bad: ['That does not look like a web address.', false],
   handover_bad: ['Choose a colleague to hand over to.', false], handover_none: ['Choose at least one client to hand over.', false],
   close_asked: ['Your request has been sent to the practice manager. Nothing changes until they act on it.', true],
@@ -33,6 +34,14 @@ router.post('/therapist/account', th, async (req, res) => {
   const done = m => res.redirect(`/therapist/account?msg=${m}`);
   const who = { actorType: 'staff', actorId: me.id };
 
+  if (action === 'details') {
+    const b = req.body, c = (v, n) => String(v || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, n) || null;
+    const raw = String(b.default_fee || '').trim().replace(/^£/, '');
+    if (raw && !/^\d{1,5}(\.\d{1,2})?$/.test(raw)) return done('details_fee');
+    await q(`UPDATE core.staff SET qualifications=$2, address=$3, postcode=$4, phone=$5, default_fee_pence=$6 WHERE id=$1`,
+      [me.id, c(b.qualifications, 200), c(b.address, 200), c(b.postcode, 20), c(b.phone, 40), raw ? Math.round(Number(raw) * 100) : null]);
+    return done('details_saved');
+  }
   if (action === 'relax') {
     let url = String(req.body.relax_url || '').trim().slice(0, 500);
     if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url; // be forgiving about a missing https://

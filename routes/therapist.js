@@ -11,7 +11,8 @@ const { audit } = require('../lib/audit');
 const V = require('../views/pages');
 const T = require('../lib/time');
 const { book } = require('./sessions');
-const { activeProgrammes } = require('./programmes');
+const { activeProgrammes, pence } = require('./programmes');
+const { sendForm, activeTemplates } = require('./forms');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
@@ -114,6 +115,7 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   if (f.under16) await audit(req, 'client.consent_attested', who);
   if (enq) {
     await q(`UPDATE clinical.enquiries SET stage='converted', converted_client_id=$2 WHERE id=$1 AND therapist_id=$3`, [enq.id, client.id, me.id]);
+    await q(`UPDATE documents.forms SET client_id=$2 WHERE enquiry_id=$1 AND therapist_id=$3`, [enq.id, client.id, me.id]); // signed forms move into the client folder
     await audit(req, 'enquiry.converted', { ...who, subjectType: 'enquiry', subjectId: enq.id });
   }
   const sent = await sendInvite(client, me);
@@ -129,6 +131,8 @@ const MSG = {
   saved: ['Saved.', true], invited: ['Invitation sent.', true], invite_failed: ['The invitation email could not be sent.', false],
   closed_no_invite: ['Reopen the record before sending an invitation.', false],
   details: ['Enter a name and a valid email address.', false], taken: ['That email address already belongs to a client record in this practice.', false],
+  form_sent: ['Form sent. They have been emailed a link to read and sign it.', true], form_notsent: ['The form is ready but the email could not be sent. Try Send again once email is working.', false],
+  form_email: ['This client has no email address to send it to (the parent or guardian\'s, for a child).', false], form_fee: ['Enter the fee per session, like 60 or 60.50.', false], form_template: ['Choose a form.', false],
   extended: ['Programme extended.', true], reminders: ['Reminder setting changed.', true],
   readonly: ['They can still sign in and read, but not add anything.', true], closed: ['Record closed. They can no longer sign in.', true],
   resumed: ['Record reopened. Their programme carries on where it left off.', true], fresh: ['Record reopened with a new programme. The earlier one is kept separately.', true],
@@ -136,13 +140,13 @@ const MSG = {
 };
 
 router.get('/therapist/client/:id', th, async (req, res) => {
-  const c = await own(req);
+  const me = req.session.staff, c = await own(req);
   if (!c) return res.status(404).send(V.forbidden());
   await audit(req, 'client.viewed', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'client', subjectId: c.id });
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes() }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -153,6 +157,14 @@ router.post('/therapist/client/:id', th, async (req, res) => {
   const log = (what, detail) => audit(req, what, { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: c.id, detail });
   const endSessions = () => q(`DELETE FROM core.sessions WHERE client_id=$1`, [c.id]);
 
+  if (action === 'send_form') {
+    const fee = pence(req.body.fee);
+    if (fee == null) return done('form_fee');
+    try {
+      const r = await sendForm({ therapistId: me.id, templateId: req.body.template, client: c, fee_pence: fee, session_format: req.body.session_format === 'online' ? 'online' : 'inperson', req });
+      return done(r.sent ? 'form_sent' : 'form_notsent');
+    } catch (err) { if (err.code === 'email') return done('form_email'); if (err.code === 'template') return done('form_template'); throw err; }
+  }
   if (action === 'invite') {
     if (c.status === 'closed') return done('closed_no_invite');
     const sent = await sendInvite(c, me);
