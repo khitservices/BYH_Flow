@@ -466,3 +466,33 @@ test('how did you hear about us: pick from the list or type a new source, it joi
   await cp.post('/practice/sources', { id: String(rid), action: 'retire' });
   assert.ok(!(await ct.get('/therapist/enquiries/new')).text.includes('Smith Osteo Clinic ' + run));
 });
+
+test('weekly score: one per week, editable within the week, gaps shown, client and own therapist only, never the manager', { skip }, async () => {
+  const scores = require('../lib/scores');
+  assert.equal(scores.weekStart(new Date('2026-11-18T10:00:00Z')), '2026-11-16');    // Wednesday -> Monday
+  assert.equal(scores.weekStart(new Date('2026-11-22T23:30:00Z')), '2026-11-16');    // Sunday night stays in the week
+  assert.equal(scores.weekStart(new Date('2026-11-23T00:30:00Z')), '2026-11-23');
+  assert.equal(scores.weekStart(new Date('2026-03-29T23:30:00Z')), '2026-03-30');    // clocks change: 00:30 BST Monday is the new week
+  const a = await addStaff('Thera Score', 'therapist'), o = await addStaff('Thera NoScore', 'therapist'), p = await addStaff('Mgr Score', 'practice_manager');
+  const ca = await staffIn(a.email, '10.79.1.1'), co = await staffIn(o.email, '10.79.1.2'), cp = await staffIn(p.email, '10.79.1.3');
+  await add(ca, { name: 'Score Client', email: em('scorec') }); const id = await idOf(em('scorec'));
+  const cl = await clientIn(em('scorec')); assert.ok(cl);
+  assert.match((await cl.get('/journal')).text, /Give this week/);
+  assert.equal((await cl.post('/journal/score', { score: '11' })).loc, '/journal/score?msg=bad');
+  assert.equal((await cl.post('/journal/score', { score: '0' })).loc, '/journal/score?msg=bad');
+  assert.equal((await cl.post('/journal/score', { score: '4' })).loc, '/journal/score?msg=saved');
+  assert.equal((await cl.post('/journal/score', { score: '7' })).loc, '/journal/score?msg=saved');                  // changed, not duplicated
+  assert.deepEqual((await q(`SELECT score FROM clinical.weekly_scores WHERE client_id=$1`, [id])).map(r => r.score), [7]);
+  // an earlier week and a gap between: entered directly
+  await q(`INSERT INTO clinical.weekly_scores (client_id, week_start, score) VALUES ($1, $2::date - 21, 3)`, [id, scores.weekStart()]);
+  const s = await scores.series(id); assert.equal(s.length, 12); assert.equal(s[11].score, 7); assert.equal(s[10].score, null); assert.equal(s[8].score, 3);
+  assert.match((await cl.get('/journal/score')).text, /not entered/);
+  assert.match((await ca.get(`/therapist/client/${id}`)).text, /How they have been feeling/);
+  assert.equal((await co.get(`/therapist/client/${id}`)).status, 404);                                               // another therapist cannot see the client at all
+  for (const url of ['/practice/stats', '/practice']) { const t = (await cp.get(url)).text; assert.ok(!/How they have been feeling|weekly_scores/.test(t)); }
+  assert.equal((await cp.get(`/therapist/client/${id}`)).status, 403);
+  // not for people who have only had a consultation
+  await add(ca, { name: 'Pre Client', email: em('prec') });
+  await q(`UPDATE clinical.clients SET status='consultation', ic_at=now()+interval '3 days', programme_sessions=NULL WHERE email=$1`, [em('prec')]);
+  const cc = await clientIn(em('prec')); assert.equal((await cc.get('/journal/score')).loc, '/journal');
+});

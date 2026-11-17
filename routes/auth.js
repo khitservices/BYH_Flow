@@ -319,7 +319,8 @@ router.get('/journal', A.requireRole('client', '/', V.forbidden), async (req, re
   const next = await one(`SELECT min(starts_at) AS at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now()`, [id]);
   const held = (await one(`SELECT count(*)::int n FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id WHERE a.client_id=$1 AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()`, [id])).n;
   const blocks = await require('../lib/blocks').blocksFor(id);
-  res.send(V.clientHome({ who: c.name, blocks, blockName: c.programme_name, therapist: c.therapist, relax: c.relax_url, forms, next: next.at ? T.when(next.at) : null,
+  const sc = (await scores.series(id, 1))[0].score;
+  res.send(V.clientHome({ score: sc, who: c.name, blocks, blockName: c.programme_name, therapist: c.therapist, relax: c.relax_url, forms, next: next.at ? T.when(next.at) : null,
     ic: c.ic_at ? T.when(c.ic_at) : null, pre: c.status === 'consultation' || c.status === 'attended',
     pos: c.programme_sessions ? { on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions } : null }));
 });
@@ -334,6 +335,19 @@ async function sessionsData(id) {
     upcoming: appts.filter(a => a.starts_at > new Date()).map(a => ({ id: a.id, when: T.when(a.starts_at), where: require('../lib/locations').label(a), asked: !!a.change_requested_at, kind: a.change_request_kind, reason: a.change_request_reason })),
     past: appts.filter(a => a.starts_at <= new Date()).reverse().map(a => ({ when: T.when(a.starts_at) })), canAsk: c.status !== 'readonly' };
 }
+const scores = require('../lib/scores');
+const scoreOK = c => c && c.status === 'active';
+router.get('/journal/score', myClient, async (req, res) => {
+  const c = await one(`SELECT c.name, c.status, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [req.session.client.id]);
+  if (!scoreOK(c)) return res.redirect('/journal');
+  const m = { saved: ['Saved. Thank you.', true], bad: ['Choose a score from 1 to 10.', false] }[String(req.query.msg || '')] || [];
+  res.send(V.clientScorePage({ who: c.name, therapist: c.therapist, series: await scores.series(req.session.client.id) }, m[0], m[1]));
+});
+router.post('/journal/score', myClient, async (req, res) => {
+  const id = req.session.client.id, c = await one(`SELECT status FROM clinical.clients WHERE id=$1`, [id]);
+  if (!scoreOK(c)) return res.redirect('/journal');
+  res.redirect(`/journal/score?msg=${(await scores.save(id, req.body.score)) ? 'saved' : 'bad'}`);
+});
 router.get('/journal/sessions', myClient, async (req, res) => {
   const [msg, ok] = CMSG[String(req.query.msg || '')] || [];
   res.send(V.clientSessionsPage(await sessionsData(req.session.client.id), msg, ok));

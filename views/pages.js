@@ -19,7 +19,7 @@ const MENUS = {
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
-    { label: 'Home', href: '/journal', exact: true }, { label: 'My sessions', href: '/journal/sessions' },
+    { label: 'Home', href: '/journal', exact: true }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' },
   ],
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
@@ -222,6 +222,7 @@ ${c.consent_status === 'granted' ? `Consent given in person on ${day(c.consent_a
 ${sec('Forms', `${formsBlock(c.forms || [], 'therapist') || '<p class="muted" style="margin:0">No forms sent yet.</p>'}${closed || !(c.templates || []).length ? '' : `<details><summary>Send a form</summary>${post('send_form', `${templateSelect('c', c.templates)}${feeInput('c', c.fee_pence)}${formatSelect('c')}<button>Send for signing</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} The signed copy is kept here.</p></details>`}`)}
 ${closed || pre ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
+${pre ? '' : sec('How they have been feeling', `${c.scores && c.scores.some(s => s.score) ? scoreBars(c.scores) : '<p class="muted">No weekly scores entered yet.</p>'}<p class="muted" style="margin:6px 0 0">Their own 1 to 10 each week, last 12 weeks. Only you can see this, not the practice manager.</p>`)}
 ${pre || c.archived_at ? '' : sec('Blocks of sessions', `${(c.blocks || []).map(b => `<p style="margin:0 0 6px"><strong>Block ${b.number}${b.name ? `: ${esc(b.name)}` : ''}</strong> ${b.id === c.current_block_id && c.status !== 'closed' ? '<span class="muted">(current)</span>' : ''}<br><span class="muted">${b.sessions} session${b.sessions === 1 ? '' : 's'}${b.price_pence != null ? ` · ${money(b.price_pence)}` : ''} · ${b.held + b.sessions_before_app} of ${b.sessions} had · started ${day(b.started_at)}${b.ended_at ? `, ended ${day(b.ended_at)}` : ''}</span></p>`).join('')}
 <details><summary>Start a further block or a single session</summary>${post('new_block', `<label for="nb">Programme</label><select id="nb" name="programme" ${sel}>${programmeOpts(c.programmes || [], '')}</select>
 <label class="check"><input type="checkbox" name="end_early"> End the current block early if it still has sessions to come</label><button class="alt">Start new block</button>`)}<p class="muted">No new forms are needed. Earlier blocks stay on record; sessions you book from now count against the new block.</p></details>`)}
@@ -282,6 +283,17 @@ ${d.closeRequests ? `<p style="color:#8a4a00"><strong>${d.closeRequests} therapi
 }
 
 // Client landing. The journal, history and the weekly score arrive in the next step; sessions and forms are here now.
+// Last weeks as bars. A week with nothing entered is an empty slot with a dash, never a zero.
+const scoreBars = series => `<div style="display:flex;gap:4px;align-items:flex-end;height:120px;margin:8px 0 4px">${series.map(s => `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%" title="Week of ${esc(s.week)}${s.score ? `: ${s.score}` : ': not entered'}">${s.score ? `<span style="font-size:12px">${s.score}</span><div style="width:100%;height:${s.score * 9}px;background:${s.current ? '#2f6f5e' : '#7fb3a3'};border-radius:3px 3px 0 0"></div>` : '<span class="muted" style="font-size:12px">–</span>'}</div>`).join('')}</div>
+<p class="muted" style="margin:0;font-size:12px">Oldest week on the left, this week on the right. A dash means nothing was entered that week.</p>`;
+function clientScorePage(d, msg, ok) {
+  const cur = d.series[d.series.length - 1].score;
+  return page('How I feel', `<p style="margin:0 0 4px"><strong style="font-size:22px">How I feel</strong></p><p class="muted" style="margin:0">Once a week, give a score from 1 to 10 for how you are feeling. Only you and ${esc(d.therapist)} can see it.</p>${note(msg, ok)}
+<div class="grid"><section class="card"><h2>This week</h2>${cur ? `<p>You scored <strong>${cur}</strong> this week. You can change it until the week ends.</p>` : '<p class="muted">Nothing entered yet this week.</p>'}
+<form method="post" action="/journal/score"><label for="sc">How are you feeling? (1 low, 10 very good)</label><select id="sc" name="score" ${sel}>${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}"${cur === n ? ' selected' : ''}>${n}</option>`).join('')}</select><button>${cur ? 'Change my score' : 'Save my score'}</button></form></section>
+<section class="card"><h2>The last 12 weeks</h2>${scoreBars(d.series)}</section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
+
 function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
@@ -289,7 +301,7 @@ ${d.pos ? `<section class="card"><h2>Your next session</h2>${d.next ? `<p><stron
 <p class="muted">${d.blockName ? `${esc(d.blockName)}: ` : ''}session ${d.pos.on} of ${d.pos.of}</p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>${(d.blocks || []).length > 1 ? `<p class="muted" style="margin-top:8px">Earlier: ${d.blocks.slice(0, -1).map(b => `${esc(b.name || 'Block ' + b.number)} (${b.sessions} session${b.sessions === 1 ? '' : 's'})`).join(', ')}</p>` : ''}</section>`
  : `<section class="card"><h2>Your initial consultation</h2>${d.ic ? `<p><strong>${esc(d.ic)}</strong></p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>` : '<p class="muted">Your therapist will be in touch to arrange it.</p>'}</section>`}
 <section class="card"><h2>Forms</h2>${d.forms.filter(f => f.status !== 'void').length ? formsBlock(d.forms, 'client') : '<p class="muted">You have no forms.</p>'}</section>
-<section class="card"><h2>Your journal</h2><p class="muted">Coming soon: write a little each week and tell us how you are feeling, from 1 to 10.</p></section>
+${d.pre ? '' : `<section class="card"><h2>How I feel</h2>${d.score ? `<p>This week: <strong>${d.score}</strong> out of 10.</p>` : '<p class="muted">You have not given this week\'s score yet.</p>'}<div class="links"><a href="/journal/score">${d.score ? 'See or change it' : 'Give this week\'s score'}</a></div></section>`}
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
 </div>`, 'wide', { who: d.who, home: '/journal' });
 }
@@ -661,4 +673,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

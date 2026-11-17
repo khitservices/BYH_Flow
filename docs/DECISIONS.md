@@ -271,3 +271,8 @@
 ## How did you hear about us (17 Nov 2026)
 - Separate from the arrival route (website, therapist page, Google, Facebook, entered by therapist). New managed list "Client sources" (practice manager menu): seeded Website, Google, Facebook, Word of mouth, Recommended by another professional. On the therapist's manual enquiry form it is a select with "Something else", where they type a new source (for example an osteopath who refers); it joins the list for everyone (matched ignoring case, so no duplicates). Stored as text on the enquiry and copied onto the client; renaming updates existing records; retiring only stops it being offered. Manager sees counts only, on Client sources and Statistics.
 - Not yet on: the public enquiry form (no question asked there; route is known) and the therapist's add-client form. Say if you want it there.
+
+## Weekly score built (17 Nov 2026)
+- Client menu "How I feel": one 1-10 score per week (Monday to Sunday, UK time, so the clock changes are handled), saved or changed any time within the week, last 12 weeks shown as bars with a dash for weeks not entered. Available to clients whose programme has started (not consultation-only, closed or read-only). Home card shows this week's score or asks for it.
+- Therapist client record: "How they have been feeling" card (same bars). Only the client's own therapist; another therapist gets 404, the practice manager 403, and no stat counts values.
+- Not yet: weekly reminder email carrying the score prompt (step 7), journal text entries, session history, support page, account and deletion requests, files.
