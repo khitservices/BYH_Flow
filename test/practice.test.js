@@ -498,3 +498,27 @@ test('weekly score: one per week, editable within the week, gaps shown, client a
   const cc = await clientIn(em('prec')); assert.equal((await cc.get('/journal/score')).status, 200);       // open from the first consultation, so nothing is hidden or redirected
   assert.match((await ca.get(`/therapist/client/${await idOf(em('prec'))}`)).text, /How they have been feeling/);
 });
+
+test('enquiry links detect where the visitor came from and fill in how they heard about us', { skip }, async () => {
+  const a = await addStaff('Thera Detect', 'therapist');
+  const hid = async (path, headers = {}) => { const t = await (await fetch(base + path, { headers })).text(); return (t.match(/name="src" value="([^"]*)"/) || [])[1]; };
+  assert.equal(await hid('/enquire?gclid=abc123'), 'google');
+  assert.equal(await hid('/enquire?fbclid=zzz'), 'facebook');
+  assert.equal(await hid('/enquire?utm_source=Instagram'), 'facebook');
+  assert.equal(await hid('/enquire', { referer: 'https://www.google.com/' }), 'google');
+  assert.equal(await hid('/enquire', { referer: 'https://l.facebook.com/l.php?u=x' }), 'facebook');
+  assert.equal(await hid('/enquire?utm_source=<script>'), 'website');                      // unknown tags change nothing
+  assert.equal(await hid('/enquire?src=google&fbclid=1'), 'google');                       // our own tag wins
+  const before = (await q(`SELECT count(*)::int n FROM core.referral_sources`))[0].n;
+  const post = (ip, f) => client(ip).post('/enquire', { therapist: a.id, ...f });
+  await post('10.80.1.1', { src: 'google', name: 'Ad Person', email: em('adp') });
+  await post('10.80.1.2', { src: 'facebook', name: 'Fb Person', email: em('fbp') });
+  await post('10.80.1.3', { name: 'Direct Person', email: em('dirp') });
+  const h = async e => (await q(`SELECT channel, heard_from FROM clinical.enquiries WHERE email=$1`, [e]))[0];
+  assert.deepEqual(await h(em('adp')), { channel: 'google', heard_from: 'Google' });
+  assert.deepEqual(await h(em('fbp')), { channel: 'facebook', heard_from: 'Facebook' });
+  assert.deepEqual(await h(em('dirp')), { channel: 'website', heard_from: 'Website' });
+  assert.equal((await q(`SELECT count(*)::int n FROM core.referral_sources`))[0].n, before);   // nothing new invented
+  await post('10.80.1.4', { src: '<script>', name: 'Odd Person', email: em('oddp') });
+  assert.equal((await h(em('oddp'))).heard_from, 'Website');
+});

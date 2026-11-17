@@ -22,6 +22,30 @@ const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
 const text = (v, max = 100) => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 const PUBLIC_SRC = ['website', 'google', 'facebook'];
 
+// Where did this visitor come from? Taken from the link they followed: our own ?src=, the ad networks' click tags
+// (Google adds gclid, Facebook/Instagram add fbclid), a utm_source tag, or the page they came from. Only known sources
+// are recognised, so a made-up link cannot add anything to the list. Many browsers and apps hide the referring page,
+// so tagged ad links are the reliable way.
+function detectSrc(req) {
+  const qy = req.query || {};
+  if (PUBLIC_SRC.includes(qy.src)) return qy.src;
+  if (qy.gclid || qy.gbraid || qy.wbraid) return 'google';
+  if (qy.fbclid) return 'facebook';
+  const u = String(qy.utm_source || '').toLowerCase();
+  if (/google|adwords/.test(u)) return 'google';
+  if (/facebook|instagram|^fb$|^ig$|meta/.test(u)) return 'facebook';
+  let host = ''; try { host = new URL(req.get('referer') || '').hostname.toLowerCase(); } catch (_) {}
+  if (/(^|\.)(google|bing)\./.test(host)) return 'google';
+  if (/(^|\.)(facebook|instagram|fb)\./.test(host) || /(^|\.)l\.facebook\.com$/.test(host)) return 'facebook';
+  return null;
+}
+const HEARD = { google: 'Google', facebook: 'Facebook', website: 'Website' };
+async function heardFor(src) {
+  const name = HEARD[src]; if (!name) return null;
+  await q(`INSERT INTO core.referral_sources (name) VALUES ($1) ON CONFLICT DO NOTHING`, [name]);
+  return name;
+}
+
 async function slugFor(staffId) {
   const r = await one(`SELECT enquiry_slug FROM core.staff WHERE id=$1`, [staffId]);
   if (r && r.enquiry_slug) return r.enquiry_slug;
@@ -34,13 +58,13 @@ const activeTherapists = () => q(`SELECT id, name FROM core.staff WHERE role='th
 // ---------- public ----------
 router.get('/enquire', async (req, res) => {
   const list = await activeTherapists();
-  res.send(V.enquireForm({ therapists: list, src: PUBLIC_SRC.includes(req.query.src) ? req.query.src : 'website', pick: list.length === 1 ? list[0].id : null }));
+  res.send(V.enquireForm({ therapists: list, src: detectSrc(req) || 'website', pick: list.length === 1 ? list[0].id : null }));
 });
 router.get('/enquire/thanks', (_req, res) => res.send(V.enquireThanks()));
 router.get('/enquire/t/:slug', async (req, res) => {
   const t = await one(`SELECT id, name FROM core.staff WHERE enquiry_slug=$1 AND role='therapist' AND status='active'`, [String(req.params.slug)]);
   if (!t) return res.status(404).send(V.forbidden());
-  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: PUBLIC_SRC.includes(req.query.src) ? req.query.src : 'therapist_page' }));
+  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: detectSrc(req) || 'therapist_page' }));
 });
 
 router.post('/enquire', async (req, res) => {
@@ -60,9 +84,9 @@ router.post('/enquire', async (req, res) => {
   if (f.for_child && !f.child_name) return again("Please enter the child's name.");
   // Limit counts accepted enquiries only, so a typo in the form never locks anyone out.
   if (limited(`enquire:${req.ip}`, 5, 3600000)) return res.status(429).send(V.enquireThanks('Too many enquiries from this connection. Please try again later.'));
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null]
-                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null]);
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone, heard_from) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src)]
+                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src)]);
   await audit(req, 'enquiry.received', { actorType: 'public', subjectType: 'enquiry', subjectId: e.id, detail: { channel: src } });
   try {
     const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [therapist.id]);
