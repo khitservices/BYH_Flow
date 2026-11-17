@@ -677,3 +677,21 @@ test('client account and help pages: requests about their information reach only
   assert.equal((await cl.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=delete');                 // can ask again once dealt with
   assert.equal((await client().get('/journal/account')).status, 302);                                                          // not signed in
 });
+
+test('a new website enquiry still reaches the therapist if the mail server was down: retried in the background', { skip }, async () => {
+  const notify = require('../lib/notify'), t = await addStaff('Thera Notify', 'therapist');
+  const count = () => mail.outbox.filter(x => x.to === t.email && x.subject === 'New enquiry').length;
+  mail.testHooks.failNext = true;
+  assert.equal((await client('10.86.1.1').post('/enquire', { therapist: t.id, name: 'Down Day', email: em('downday') })).loc, '/enquire/thanks');   // the person still gets their thanks page
+  assert.equal(count(), 0);
+  const e = (await q(`SELECT id, notified_at, notify_attempts FROM clinical.enquiries WHERE email=$1`, [em('downday')]))[0]; assert.equal(e.notified_at, null); assert.equal(e.notify_attempts, 1);
+  assert.equal(await notify.retryPending(), 0);                                                                       // too soon: left a minute to settle
+  await q(`UPDATE clinical.enquiries SET created_at = now() - interval '5 minutes' WHERE id=$1`, [e.id]);
+  assert.ok(await notify.retryPending() >= 1); assert.equal(count(), 1);
+  assert.equal(await notify.retryPending(), 0); assert.equal(count(), 1);                                             // not sent twice
+  // gives up after 5 tries, and ignores phone enquiries the therapist typed in themselves
+  await client('10.86.1.2').post('/enquire', { therapist: t.id, name: 'Stuck', email: em('stuck') });
+  await q(`UPDATE clinical.enquiries SET notified_at=NULL, notify_attempts=5, created_at=now() - interval '1 hour' WHERE email=$1`, [em('stuck')]);
+  await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, phone) VALUES ($1,'phone',false,'Typed In','070')`, [t.id]);
+  const before = count(); await notify.retryPending(); assert.equal(count(), before);
+});

@@ -72,6 +72,8 @@ if (require.main === module) {
   const sweep = () => require('./lib/archive').archiveStale().then(n => n && console.log(`[archive] ${n} stale enquir${n === 1 ? 'y' : 'ies'} archived`)).catch(e => console.error('[archive]', e.message));
   setTimeout(sweep, 30000); setInterval(sweep, 3600000).unref();
   const remind = () => require('./lib/reminders').run().then(r => { const n = Object.values(r).reduce((a, b) => a + b, 0); if (n) console.log('[reminders] sent', JSON.stringify(r)); }).catch(e => console.error('[reminders]', e.message));
+  const retry = () => require('./lib/notify').retryPending().then(n => n && console.log(`[notify] ${n} enquiry email(s) sent on retry`)).catch(e => console.error('[notify]', e.message));
+  setInterval(retry, 300000).unref();
   setTimeout(remind, 60000); setInterval(remind, 3600000).unref();
 }
 module.exports = app;

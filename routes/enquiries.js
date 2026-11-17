@@ -91,10 +91,7 @@ router.post('/enquire', async (req, res) => {
     f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src, b.heard), campaignOf(b.campaign)]
                 : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src, b.heard), campaignOf(b.campaign)]);
   await audit(req, 'enquiry.received', { actorType: 'public', subjectType: 'enquiry', subjectId: e.id, detail: { channel: src } });
-  try {
-    const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [therapist.id]);
-    await mail.sendMail(t.email, 'New enquiry', mail.newEnquiryEmail(t.name, `${process.env.BASE_URL}/staff`)); // no personal details in the email
-  } catch (err) { console.error('[enquiries] notify failed:', err.message); }
+  await require('../lib/notify').notifyEnquiry(e.id);   // retried in the background if the mail server is down
   res.redirect('/enquire/thanks');
 });
 

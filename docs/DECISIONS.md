@@ -313,3 +313,8 @@
 - **Help:** how sign-in works, how to ask to change an appointment, the weekly score, the relaxation link, and a plain urgent-help box (999, NHS 111, Samaritans 116 123). Kev to confirm the urgent-help wording suits the practice.
 - Not built: a client-facing message to the therapist (no in-app messaging), data export file, automatic erasure, and an under-16's account being handled by the guardian differently (requests currently come from whichever email signed in).
 - Parked: journal text entries. The weekly score note covers the written part for now.
+
+## Background notification of new enquiries (17 Nov 2026)
+- The app runs on the server, so nothing depends on anyone having it open: the therapist is emailed the moment a public enquiry arrives (no detail in the email), and reminders and summaries run from the hourly sweep.
+- The one gap was a failed send (mail server down): it was only logged and the therapist never heard. Now each public enquiry records whether the therapist was told (migration 027); a check every 5 minutes retries any not yet sent, up to 5 tries within 2 days. Enquiries the therapist typed in themselves are not notified. If every try fails, it still shows in the therapist's Enquiries list and the morning summary.
+- Not covered: the same retry for client change requests and data requests (still sent once; they show in the morning summary). A general outbox with retries for all email remains parked. Push notifications to the phone (as opposed to email) are not built: possible later for the installed phone app, but email is what works on any phone today.
