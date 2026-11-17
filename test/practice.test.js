@@ -76,7 +76,7 @@ test('public form: the practice form asks which therapist, a therapist page goes
   assert.equal((await cp.get('/therapist/enquiries')).status, 403);
   assert.equal((await cb.post(`/therapist/enquiries/${e.id}`, { action: 'delete' })).status, 404);
   // the manager's statistics count it, without naming anyone
-  const st = (await cp.get('/practice/stats')).text; assert.match(st, /Google ad 1/); assert.ok(!st.includes('Pat Public'));
+  const st = (await cp.get('/practice/stats')).text; assert.match(st, /Google ad<\/span>[\s\S]*?<strong>1<\/strong>/); assert.ok(!st.includes('Pat Public'));
   // the therapist's own page
   const slugRow = (await ca.get('/therapist/enquiries')).text.match(/\/enquire\/t\/([a-f0-9]{12})/); assert.ok(slugRow);
   const page = await anon.get(`/enquire/t/${slugRow[1]}`); assert.match(page.text, /will go to Thera Enq/);
