@@ -190,3 +190,16 @@
 - Added (Kev): the full enquiry form the therapist completes themselves, as in the ITC contact app (`/therapist/enquiries/new`): adult or child, first and last name, email, telephone, address, enquiry date, optional consultation date and time, parent or guardian name, relationship, email and telephone for a child, and notes. It replaces the short phone form. Route is recorded as "Entered by therapist".
 - The enquiry record now follows ITC's meaning: `name` is always the person the therapy is for (the child, for a child) and the parent or guardian has their own fields. A child enquiry from the public form puts the parent's details in the guardian fields. Calendar and consultation emails for a child go to the guardian's email (else the contact email), as in ITC.
 - Differences from ITC to confirm: ITC makes email, telephone and enquiry date compulsory; here a name and at least one way to reach them are needed, because phone enquiries often have only a number. ITC's address is stored but not yet used until the documents step.
+
+## Programmes and fixed-price sessions (Kev, step 5)
+- The practice manager keeps a list of named programmes (`/practice/programmes`): name, number of sessions, optional price. A single fixed-price session such as smoking cessation is a programme of 1 session. The existing 6, 8, 10 and 12 session lengths are seeded with no price; no prices are invented.
+- The therapist chooses a programme when adding a client, and when reopening a client whose earlier programme has lapsed. The client keeps a copy of the programme's name, sessions and price from then, so changing or retiring a programme never alters an existing client. Programmes are retired, never deleted.
+- Prices are recorded and shown to the therapist only. No payments or invoicing here (commerce is parked). Showing the price to the client is a later choice.
+- A one-session programme starts with weekly reminders off. "Extend programme" still adds 6, 8, 10 or 12 sessions.
+- Not yet done: choosing a programme on an enquiry (ITC's fee per session belongs with the agreement documents, step 5b).
+
+## Weekly "how I feel" score (Kev, step 6 and 7)
+- The client enters a score from 1 to 10 for how they feel, once a week, in the client area.
+- The therapist can see each client's scores week on week (a trend), so this is clinical data: visible to that client's therapist only, never to the practice manager (statistics may show a count of scores entered, never values).
+- It is part of the weekly reminder cycle (step 7): the weekly reminder asks for the score along with the journal. One-off (1-session) programmes have reminders off by default.
+- Open for step 6: whether the score is entered with a journal entry or on its own, and whether a missed week is simply blank on the trend.

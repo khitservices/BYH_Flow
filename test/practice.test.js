@@ -53,7 +53,8 @@ async function clientIn(email) { // null when no link is emailed, or the link do
 }
 const idOf = async e => (await q(`SELECT id FROM clinical.clients WHERE email=$1`, [e]))[0].id;
 
-const add = (c, f) => c.post('/therapist/clients/add', { name: 'Someone', sessions: '8', sessions_before_app: '0', reminder_dow: '3', ...f });
+const progId = async n => ((await q(`SELECT id FROM core.programmes WHERE sessions=$1 AND active ORDER BY id LIMIT 1`, [n]))[0] || { id: 0 }).id;
+const add = async (c, f) => { const { sessions = '8', ...rest } = f; return c.post('/therapist/clients/add', { name: 'Someone', programme: await progId(sessions), sessions_before_app: '0', reminder_dow: '3', ...rest }); };
 const post = (c, p, f) => c.post(p, f);
 const enq = async n => (await q(`SELECT * FROM clinical.enquiries WHERE name=$1`, [n]))[0];
 
@@ -127,7 +128,7 @@ test('therapist pipeline: phone capture, consultation with calendar file, stages
   // turn into a client: the form is pre-filled, and saving marks the enquiry converted
   await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Cathy', last_name: 'Convert', email: em('cathy'), phone: '07700 900222', address: '1 High Street' }); e = await enq('Cathy Convert');
   const pre = await c.get(`/therapist/clients/add?from=${e.id}`); assert.match(pre.text, /value="Cathy Convert"/); assert.match(pre.text, new RegExp(`value="${em('cathy').replace('.', '\\.')}"`));
-  const r = await post(c, '/therapist/clients/add', { from_enquiry: e.id, name: 'Cathy Convert', email: em('cathy'), sessions: '8', sessions_before_app: '0', reminder_dow: '3' });
+  const r = await post(c, '/therapist/clients/add', { from_enquiry: e.id, name: 'Cathy Convert', email: em('cathy'), programme: await progId(8), sessions_before_app: '0', reminder_dow: '3' });
   assert.match(r.loc, /^\/therapist\/client\/\d+\?msg=added/);
   e = await enq('Cathy Convert'); assert.equal(e.stage, 'converted'); assert.ok(e.converted_client_id);
   assert.equal((await c.get(`/therapist/clients/add?from=${e.id}`)).text.includes('Cathy Convert'), false); // converted ones are not offered again
@@ -173,6 +174,36 @@ test('manual enquiry form (from the ITC app): adult and child fields, guardian, 
   const m = mail.outbox.slice(n).find(x => x.to === em('gail')); assert.ok(m, 'the guardian is emailed, not the child');
   assert.match(m.html, /Hi Gail/); assert.match(m.html, /10 September 2027 at 15:30/);
   const page = (await c.get('/therapist/enquiries')).text; assert.match(page, /Parent or guardian: Gail Guardian \(Aunt\)/); assert.match(page, /2 Low Road/);
+});
+
+test('programmes: the manager keeps the list, a single fixed-price session works, and clients keep what they were given', { skip }, async () => {
+  const t = await addStaff('Thera Prog', 'therapist'), p = await addStaff('Mgr Prog', 'practice_manager');
+  const ct = await staffIn(t.email), cp = await staffIn(p.email);
+  const name = 'Smoking cessation ' + run;
+  assert.match((await cp.get('/practice/programmes')).text, /6-session programme/);
+  assert.equal((await ct.get('/practice/programmes')).status, 403);
+  assert.equal((await post(cp, '/practice/programmes', { name, sessions: '1', price: 'lots' })).status, 400);
+  assert.equal((await post(cp, '/practice/programmes', { name, sessions: '0', price: '75' })).status, 400);
+  assert.equal((await post(cp, '/practice/programmes', { name, sessions: '1', price: '75' })).status, 200);
+  const prog = (await q(`SELECT * FROM core.programmes WHERE name=$1`, [name]))[0];
+  assert.equal(prog.sessions, 1); assert.equal(prog.price_pence, 7500);
+  const form = (await ct.get('/therapist/clients/add')).text;
+  assert.match(form, new RegExp(`${name}: 1 session, £75`));
+  const r = await post(ct, '/therapist/clients/add', { name: 'Quit Smoking', email: em('quit'), programme: prog.id, sessions_before_app: '5', reminder_dow: '3' });
+  assert.match(r.loc, /^\/therapist\/client\/\d+\?msg=added/);
+  const cl = (await q(`SELECT * FROM clinical.clients WHERE email=$1`, [em('quit')]))[0];
+  assert.equal(cl.programme_sessions, 1); assert.equal(cl.sessions_before_app, 0); assert.equal(cl.reminders_on, false);   // one-off: no weekly reminders
+  assert.equal(cl.programme_price_pence, 7500); assert.equal(cl.programme_name, name);
+  assert.match((await ct.get(`/therapist/client/${cl.id}`)).text, new RegExp(`${name}: 1 session · £75`));
+  // changing the programme later does not change the client; retired ones are no longer offered or accepted
+  await post(cp, `/practice/programmes/${prog.id}`, { name, sessions: '2', price: '90' });
+  const after = (await q(`SELECT programme_sessions, programme_price_pence FROM clinical.clients WHERE id=$1`, [cl.id]))[0];
+  assert.equal(after.programme_sessions, 1); assert.equal(after.programme_price_pence, 7500);
+  await post(cp, `/practice/programmes/${prog.id}`, { action: 'retire' });
+  assert.ok(!(await ct.get('/therapist/clients/add')).text.includes(name));
+  assert.equal((await post(ct, '/therapist/clients/add', { name: 'Late Quit', email: em('lq'), programme: prog.id })).status, 400);
+  assert.match((await cp.get('/practice')).text, /Programmes and prices/);
+  await q(`UPDATE clinical.clients SET programme_id=NULL WHERE email=$1`, [em('quit')]); await q(`DELETE FROM core.programmes WHERE id=$1`, [prog.id]);
 });
 
 test('cleanse script refuses to run without the exact confirmation', async () => {

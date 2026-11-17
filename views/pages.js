@@ -87,6 +87,9 @@ const STATUS = { active: 'Active', readonly: 'Read-only', closed: 'Closed' };
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const sel = 'style="font-size:16px;padding:11px;width:100%;margin:6px 0;border-radius:6px;border:1px solid #bbb;background:#fff"';
 const opts = (list, chosen) => list.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(chosen) ? ' selected' : ''}>${esc(t)}</option>`).join('');
+const money = p => (p == null ? '' : `£${(p / 100).toFixed(2).replace(/\.00$/, '')}`);
+const programmeLabel = p => `${p.name}: ${p.sessions} session${p.sessions === 1 ? '' : 's'}${p.price_pence != null ? `, ${money(p.price_pence)}` : ''}`;
+const programmeOpts = (list, chosen) => list.map(p => `<option value="${p.id}"${String(chosen) === String(p.id) ? ' selected' : ''}>${esc(programmeLabel(p))}</option>`).join('');
 const lengthOpts = chosen => opts([6, 8, 10, 12].map(n => [n, `${n} sessions`]), chosen);
 const dayOpts = chosen => opts(DAYS.map((d, i) => [i, d]), chosen);
 const note = (msg, ok) => (msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : '');
@@ -108,7 +111,7 @@ function clientAdd(f, msg) {
 <label for="name">Name</label><input id="name" name="name" required value="${esc(f.name)}">
 <label for="email">Email (they sign in with this)</label><input id="email" name="email" type="email" required value="${esc(f.email)}">
 <label for="phone">Phone (optional)</label><input id="phone" name="phone" type="tel" value="${esc(f.phone)}">
-<label for="sessions">Programme length</label><select id="sessions" name="sessions" ${sel}>${lengthOpts(f.sessions || 8)}</select>
+<label for="programme">Programme</label><select id="programme" name="programme" ${sel}>${programmeOpts(f.programmes || [], f.programme)}</select>
 <label for="sba">Sessions already had before joining (0 for a new client)</label><input id="sba" name="sessions_before_app" inputmode="numeric" value="${esc(f.sessions_before_app || 0)}">
 <label for="rd">Weekly journal reminder day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(f.reminder_dow ?? 3)}</select>
 <label for="fd">First session date (optional)</label><input id="fd" name="first_date" type="date">
@@ -140,12 +143,12 @@ ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? `
 ${closed ? '' : post('invite', '<button class="alt">Send invitation again</button>')}`)}
 ${c.under16 ? sec('Consent (under 16)', `<p class="muted" style="margin:0">Parent or guardian: ${esc(c.guardian_name)}${c.guardian_email ? ` · ${esc(c.guardian_email)}` : ''}${c.guardian_phone ? ` · ${esc(c.guardian_phone)}` : ''}<br>
 Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}</p>`) : ''}
-${closed ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_sessions} sessions${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
+${closed ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
 ${closed ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
 <label for="rd">Day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(c.reminder_dow)}</select><button class="alt">Save reminder setting</button>`))}
 ${sec('Record', closed
-    ? post('reopen', `${c.freshOnReopen ? `<p class="muted" style="margin:0">Closed more than four weeks ago, so reopening starts a new programme. The earlier one is kept separately.</p><label for="ns">New programme length</label><select id="ns" name="sessions" ${sel}>${lengthOpts(8)}</select>` : '<p class="muted" style="margin:0">Closed within the last four weeks, so reopening carries on the same programme.</p>'}<button>Reopen record</button>`)
+    ? post('reopen', `${c.freshOnReopen ? `<p class="muted" style="margin:0">Closed more than four weeks ago, so reopening starts a new programme. The earlier one is kept separately.</p><label for="ns">New programme</label><select id="ns" name="programme" ${sel}>${programmeOpts(c.programmes || [], c.programme_id)}</select>` : '<p class="muted" style="margin:0">Closed within the last four weeks, so reopening carries on the same programme.</p>'}<button>Reopen record</button>`)
     : (c.status === 'active' ? post('readonly', '<button class="alt">Make read-only (can sign in and read, not add)</button>') : post('reopen', '<button class="alt">Make active again</button>'))
       + post('close', '<button style="background:#b00020">Close record (stops sign-in)</button>'))}
 <p><a href="/therapist/clients">Back to clients</a></p>`);
@@ -350,4 +353,19 @@ function enquiryManual(f = {}, msg) {
 <button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
 }
 
-module.exports = { enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+function programmes(rows, msg, ok) {
+  const card = p => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0"><strong>${esc(p.name)}</strong>${p.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${p.sessions} session${p.sessions === 1 ? '' : 's'}${p.price_pence != null ? ` · ${money(p.price_pence)}` : ' · no price set'}</span></p>
+<details><summary>Change</summary><form method="post" action="/practice/programmes/${p.id}">
+<label for="n${p.id}">Name</label><input id="n${p.id}" name="name" required maxlength="80" value="${esc(p.name)}">
+<label for="s${p.id}">Sessions</label><input id="s${p.id}" name="sessions" inputmode="numeric" required value="${p.sessions}">
+<label for="p${p.id}">Price in pounds (optional)</label><input id="p${p.id}" name="price" inputmode="decimal" value="${p.price_pence == null ? '' : esc((p.price_pence / 100).toFixed(2))}">
+<button>Save</button></form>
+<form method="post" action="/practice/programmes/${p.id}"><input type="hidden" name="action" value="${p.active ? 'retire' : 'restore'}"><button class="alt">${p.active ? 'Retire (stop offering it)' : 'Offer again'}</button></form></details></section>`;
+  return page('Programmes', `<p><strong>Programmes and prices</strong></p><p class="muted">What therapists choose from when they add a client. A single fixed-price session, such as smoking cessation, is a programme of 1 session. Prices are recorded for the therapist to see; no payments are taken here.</p>${note(msg, ok)}
+${rows.map(card).join('')}
+<form method="post" action="/practice/programmes" style="border-top:1px solid #ddd;padding-top:12px"><p style="margin:0"><strong>Add a programme</strong></p>
+<label for="an">Name</label><input id="an" name="name" required maxlength="80" placeholder="Smoking cessation"><label for="as">Sessions</label><input id="as" name="sessions" inputmode="numeric" required value="1">
+<label for="ap">Price in pounds (optional)</label><input id="ap" name="price" inputmode="decimal"><button>Add programme</button></form><p><a href="/practice">Back</a></p>`);
+}
+
+module.exports = { programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

@@ -52,7 +52,8 @@ async function clientIn(email) { // null when no link is emailed, or the link do
 }
 const idOf = async e => (await q(`SELECT id FROM clinical.clients WHERE email=$1`, [e]))[0].id;
 
-const add = (c, f) => c.post('/therapist/clients/add', { name: 'Someone', sessions: '8', sessions_before_app: '0', reminder_dow: '3', ...f });
+const progId = async n => ((await q(`SELECT id FROM core.programmes WHERE sessions=$1 AND active ORDER BY id LIMIT 1`, [n]))[0] || { id: 0 }).id;
+const add = async (c, f) => { const { sessions = '8', ...rest } = f; return c.post('/therapist/clients/add', { name: 'Someone', programme: await progId(sessions), sessions_before_app: '0', reminder_dow: '3', ...rest }); };
 const row = async id => (await q(`SELECT * FROM clinical.clients WHERE id=$1`, [id]))[0];
 const act = (c, id, f) => c.post(`/therapist/client/${id}`, f);
 
@@ -77,11 +78,12 @@ test('a therapist adds a client, who is invited and can sign in to the client ar
   assert.equal((await cl.get(`/therapist/client/${id}`)).status, 403);
   assert.match((await c.get('/therapist')).text, /Clients \(1\)/);
   assert.match((await c.get('/therapist/clients')).text, /session 4 of 10/);
-  // joining part-way through always leaves at least one session to come; odd lengths fall back to 8
+  // joining part-way through always leaves at least one session to come; a programme that is not on the list is refused
   await add(c, { name: 'Late', email: em('late'), sessions: '6', sessions_before_app: '99' });
   assert.equal((await row(await idOf(em('late')))).sessions_before_app, 5);
-  await add(c, { name: 'Odd', email: em('odd'), sessions: '500' });
-  assert.equal((await row(await idOf(em('odd')))).programme_sessions, 8);
+  // a programme that is not on the list is refused; nothing is created
+  assert.equal((await add(c, { name: 'Odd', email: em('odd'), sessions: '500' })).status, 400);
+  assert.equal((await q(`SELECT 1 FROM clinical.clients WHERE email=$1`, [em('odd')])).length, 0);
 });
 
 test('an under-16 client cannot be added without recorded consent', { skip }, async () => {
@@ -140,7 +142,7 @@ test('closing signs the client out and stops sign-in; reopening soon resumes, la
   await act(c, id, { action: 'close' });
   await q(`UPDATE clinical.clients SET closed_at = now() - interval '40 days' WHERE id=$1`, [id]);
   assert.match((await c.get(`/therapist/client/${id}`)).text, /starts a new programme/);
-  assert.equal((await act(c, id, { action: 'reopen', sessions: '12' })).loc, `/therapist/client/${id}?msg=fresh`);
+  assert.equal((await act(c, id, { action: 'reopen', programme: await progId(12) })).loc, `/therapist/client/${id}?msg=fresh`);
   s = await row(id);
   assert.equal(s.programme_number, 2); assert.equal(s.programme_sessions, 12); assert.equal(s.sessions_before_app, 0); assert.equal(s.closed_at, null);
 });

@@ -53,7 +53,8 @@ async function clientIn(email) { // null when no link is emailed, or the link do
 const idOf = async e => (await q(`SELECT id FROM clinical.clients WHERE email=$1`, [e]))[0].id;
 
 const T = require('../lib/time');
-const add = (c, f) => c.post('/therapist/clients/add', { name: 'Someone', sessions: '8', sessions_before_app: '0', reminder_dow: '3', ...f });
+const progId = async n => ((await q(`SELECT id FROM core.programmes WHERE sessions=$1 AND active ORDER BY id LIMIT 1`, [n]))[0] || { id: 0 }).id;
+const add = async (c, f) => { const { sessions = '8', ...rest } = f; return c.post('/therapist/clients/add', { name: 'Someone', programme: await progId(sessions), sessions_before_app: '0', reminder_dow: '3', ...rest }); };
 const appts = cid => q(`SELECT * FROM clinical.appointments WHERE client_id=$1 ORDER BY id`, [cid]);
 const mailsTo = (to, from = 0) => mail.outbox.slice(from).filter(m => m.to === to);
 const raw = async (path, cookie) => { const r = await fetch(base + path, { redirect: 'manual', headers: cookie ? { cookie } : {} }); return { status: r.status, type: r.headers.get('content-type'), text: await r.text() }; };

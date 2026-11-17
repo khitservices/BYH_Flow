@@ -52,7 +52,8 @@ async function clientIn(email) { // null when no link is emailed, or the link do
 }
 const idOf = async e => (await q(`SELECT id FROM clinical.clients WHERE email=$1`, [e]))[0].id;
 
-const add = (c, f) => c.post('/therapist/clients/add', { name: 'Someone', sessions: '8', sessions_before_app: '0', reminder_dow: '3', ...f });
+const progId = async n => ((await q(`SELECT id FROM core.programmes WHERE sessions=$1 AND active ORDER BY id LIMIT 1`, [n]))[0] || { id: 0 }).id;
+const add = async (c, f) => { const { sessions = '8', ...rest } = f; return c.post('/therapist/clients/add', { name: 'Someone', programme: await progId(sessions), sessions_before_app: '0', reminder_dow: '3', ...rest }); };
 const acct = (c, f) => c.post('/therapist/account', f);
 const staffRow = async id => (await q(`SELECT * FROM core.staff WHERE id=$1`, [id]))[0];
 

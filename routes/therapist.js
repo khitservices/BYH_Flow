@@ -11,6 +11,7 @@ const { audit } = require('../lib/audit');
 const V = require('../views/pages');
 const T = require('../lib/time');
 const { book } = require('./sessions');
+const { activeProgrammes } = require('./programmes');
 
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff', V.forbidden);
@@ -57,31 +58,35 @@ async function sendInvite(client, therapist) {
   } catch (e) { console.error('[clients] invite failed:', e.message); return false; }
 }
 
+const withProgrammes = async f => ({ ...f, programmes: await activeProgrammes() });
+
 // "Turn into a client" from an enquiry: pre-fills the form. The therapist still checks it and, for a child, records consent.
 router.get('/therapist/clients/add', th, async (req, res) => {
   const e = req.query.from ? await one(`SELECT * FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND stage <> 'converted'`, [Number(req.query.from) || 0, req.session.staff.id]) : null;
-  if (!e) return res.send(V.clientAdd({}));
-  res.send(V.clientAdd(e.for_child
+  if (!e) return res.send(V.clientAdd(await withProgrammes({})));
+  res.send(V.clientAdd(await withProgrammes(e.for_child
     ? { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone, under16: true, guardian_name: e.guardian_name, guardian_email: e.guardian_email, guardian_phone: e.guardian_phone }
-    : { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone }));
+    : { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone })));
 });
 
 router.post('/therapist/clients/add', th, async (req, res) => {
   const me = req.session.staff, b = req.body;
   const f = {
     name: text(b.name), email: norm(b.email), phone: text(b.phone, 40), under16: b.under16 === 'on',
-    sessions: length(b.sessions, 8), reminder_dow: dow(b.reminder_dow),
+    reminder_dow: dow(b.reminder_dow), programme: Number(b.programme) || null,
     guardian_name: text(b.guardian_name), guardian_email: norm(b.guardian_email), guardian_phone: text(b.guardian_phone, 40),
     consent_note: text(b.consent_note, 500), consent_date: text(b.consent_date, 10),
   };
+  const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [f.programme || 0]);
+  f.sessions = prog ? prog.sessions : 1;
   // Joining part-way through: must leave at least one session to come.
   let prior = Number(b.sessions_before_app);
   if (!Number.isInteger(prior) || prior < 0) prior = 0;
   f.sessions_before_app = Math.min(prior, f.sessions - 1);
   const enq = b.from_enquiry ? await one(`SELECT id FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND stage <> 'converted'`, [Number(b.from_enquiry) || 0, me.id]) : null;
   if (enq) f.from_enquiry = enq.id;
-  const again = msg => res.status(400).send(V.clientAdd(f, msg));
-
+  const again = async msg => res.status(400).send(V.clientAdd(await withProgrammes(f), msg));
+  if (!prog) return again('Choose a programme. If none is listed, ask your practice manager to set them up.');
   if (!f.name) return again("Enter the client's name.");
   if (!EMAIL_RE.test(f.email)) return again('Enter a valid email address.');
   const existing = await one(`SELECT id, therapist_id FROM clinical.clients WHERE lower(email)=$1`, [f.email]);
@@ -98,11 +103,12 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   }
   const [client] = await q(
     `INSERT INTO clinical.clients (therapist_id, name, email, phone, under16, guardian_name, guardian_email, guardian_phone,
-       consent_status, consent_at, consent_method, consent_note, consent_recorded_by, programme_sessions, sessions_before_app, reminder_dow)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+       consent_status, consent_at, consent_method, consent_note, consent_recorded_by, programme_sessions, sessions_before_app, reminder_dow,
+       programme_id, programme_name, programme_price_pence, reminders_on)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
     [me.id, f.name, f.email, f.phone || null, f.under16, f.under16 ? f.guardian_name : null, f.under16 ? f.guardian_email || null : null,
      f.under16 ? f.guardian_phone || null : null, consent.status, consent.at, consent.method, consent.note, consent.by,
-     f.sessions, f.sessions_before_app, f.reminder_dow]);
+     f.sessions, f.sessions_before_app, f.reminder_dow, prog.id, prog.name, prog.price_pence, f.sessions > 1]); // one-off sessions start with weekly reminders off
   const who = { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id };
   await audit(req, 'client.created', { ...who, detail: { under16: f.under16 } });
   if (f.under16) await audit(req, 'client.consent_attested', who);
@@ -136,7 +142,7 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes() }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -193,8 +199,11 @@ router.post('/therapist/client/:id', th, async (req, res) => {
       await log('client.status_changed', { status: 'active' });
       return done(c.status === 'closed' ? 'resumed' : 'active');
     }
+    const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [Number(req.body.programme) || 0]);
+    if (!prog) return done('unknown');
     await q(`UPDATE clinical.clients SET status='active', closed_at=NULL, programme_number=programme_number+1, programme_sessions=$2,
-             sessions_before_app=0, programme_started_at=now() WHERE id=$1`, [c.id, length(req.body.sessions, 8)]);
+             sessions_before_app=0, programme_started_at=now(), programme_id=$3, programme_name=$4, programme_price_pence=$5, reminders_on=$6 WHERE id=$1`,
+      [c.id, prog.sessions, prog.id, prog.name, prog.price_pence, prog.sessions > 1]);
     await log('client.status_changed', { status: 'active', new_programme: true });
     return done('fresh');
   }
