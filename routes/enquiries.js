@@ -16,7 +16,7 @@ const consult = require('../lib/consult');
 const archive = require('../lib/archive');
 
 const router = express.Router();
-const th = A.requireRole('therapist', '/staff', V.forbidden);
+const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
 const text = (v, max = 100) => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 const PUBLIC_SRC = ['website', 'google', 'facebook'];

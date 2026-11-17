@@ -7,7 +7,7 @@ const { audit } = require('../lib/audit');
 const V = require('../views/pages');
 
 const router = express.Router();
-const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
+const pm = A.requireRole('practice_manager', '/staff/practice', V.forbidden);
 
 const activeProgrammes = () => q(`SELECT * FROM core.programmes WHERE active ORDER BY sessions, lower(name)`);
 // '75' or '75.50' → pence; blank → no price; anything else → undefined (refused).

@@ -18,8 +18,8 @@ const { audit } = require('../lib/audit');
 const V = require('../views/pages');
 
 const router = express.Router();
-const th = A.requireRole('therapist', '/staff', V.forbidden);
-const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
+const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
+const pm = A.requireRole('practice_manager', '/staff/practice', V.forbidden);
 const cl = A.requireRole('client', '/', V.forbidden);
 const tokenHash = t => crypto.createHmac('sha256', process.env.SESSION_SECRET || '').update('form:' + t).digest('hex');
 const text = (v, max = 200) => String(v ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);

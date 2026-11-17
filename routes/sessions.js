@@ -16,7 +16,7 @@ const { limited } = require('../lib/ratelimit');
 const V = require('../views/pages');
 
 const router = express.Router();
-const th = A.requireRole('therapist', '/staff', V.forbidden);
+const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 const feedHash = token => crypto.createHmac('sha256', process.env.SESSION_SECRET || '').update('calfeed:' + token).digest('hex');
 const ownClient = (req, id) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(id) || 0, req.session.staff.id]);
 const ownAppt = (req, id) => one(`SELECT a.*, c.name AS client_name, c.email AS client_email, c.status AS client_status

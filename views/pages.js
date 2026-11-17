@@ -24,6 +24,7 @@ const MENUS = {
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
 
+const logoTag = style => (BRAND.logoVersion ? `<img src="/brand/logo?v=${BRAND.logoVersion}" alt="" style="${style}">` : '');
 // w: undefined = narrow (sign-in, public pages); anything else only matters for the signed-out layout.
 function page(title, body, w, nav) {
   const ctx = require('../lib/ctx').get();
@@ -49,7 +50,7 @@ main.read{max-width:700px;margin:3vh auto}main.wide{max-width:1040px;margin:3vh 
 main.read form,main.wide form{max-width:560px}
 .cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));column-gap:32px}
 @media (max-width:700px){main,main.read,main.wide{margin:0;border-radius:0;box-shadow:none;padding:18px;min-height:100vh}.cols{display:block}}
-</style></head><body><main class="${w || ''}"><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
+</style></head><body><main class="${w || ''}">${logoTag('max-height:56px;max-width:240px;display:block;margin:0 0 10px')}<h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
   }
   const items = MENUS[ctx.role];
   const links = items.filter(i => i.href);
@@ -78,15 +79,15 @@ details{margin:6px 0}summary{cursor:pointer;color:${BRAND.colorPrimary};font-wei
 @media (max-width:820px){.app{display:block}.side{position:static;width:auto;height:auto;padding:10px 12px;border-right:0;border-bottom:1px solid #e3e8e8}
  .side nav{flex-direction:row;overflow-x:auto;gap:4px}.grp{display:none}.item{white-space:nowrap}.me{border:0;padding:8px 10px 0}
  .content{padding:18px 16px 40px}.cols{display:block}}
-</style></head><body><div class="app"><aside class="side"><div class="brand">${esc(BRAND.practiceName)}</div><div class="role">${esc(ROLE_NAME[ctx.role])}</div>
+</style></head><body><div class="app"><aside class="side"><div class="brand">${logoTag('max-height:44px;max-width:190px;display:block;margin-bottom:6px')}${esc(BRAND.practiceName)}</div><div class="role">${esc(ROLE_NAME[ctx.role])}</div>
 <nav aria-label="Main">${menu}</nav><div class="me">${esc(ctx.who)}<br><a href="/logout">Sign out</a></div></aside>
 <div class="main"><div class="content">${body.replace(/<p><a href="\/(therapist|practice|journal)">(Back|Home)<\/a><\/p>/g, '')}</div></div></div></body></html>`;
 }
 
 const wide = (t, b) => page(t, b, 'wide'), read = (t, b) => page(t, b, 'read');
-const clientLogin = () => page('Client sign-in', `<p><strong>Client sign-in</strong></p><p>Enter your email and we'll send you a sign-in link.</p>
+const clientLogin = () => page('Client sign-in', `<p><strong style="font-size:18px">Client sign-in</strong></p><p>Sign in to your client area: your sessions, forms and journal. Enter your email and we'll send you a sign-in link.</p>
 <form method="post" action="/request-link"><input name="email" type="email" autocomplete="email" required placeholder="Your email">
-<button>Email me a link</button></form><p class="muted">Therapist or practice manager? <a href="/staff">Use team sign-in</a></p>`);
+<button>Email me a link</button></form><p class="muted">Therapist? <a href="/staff/therapist">Therapist sign-in</a> · Practice manager? <a href="/staff/practice">Practice manager sign-in</a></p>`);
 
 const clientSent = () => page('Check your email', `<p>If that address is registered, we've emailed a sign-in link. It expires in 15 minutes.</p>
 <p class="muted" id="s">Waiting for you to open it&hellip;</p>
@@ -97,14 +98,20 @@ const clientConfirm = token => page('Sign in', `<p>Tap to finish signing in.</p>
 
 const linkExpired = () => page('Link expired', `<p>That link has expired or has already been used.</p><p><a href="/">Request a new one</a></p>`);
 
-const staffLogin = () => page('Team sign-in', `<p><strong>Team sign-in</strong></p><p>Enter your work email and we'll send a 6-digit code.</p>
-<form method="post" action="/staff/request-code"><input name="email" type="email" autocomplete="email" required placeholder="Your email">
-<button>Email me a code</button></form><p class="muted">Client? <a href="/">Use client sign-in</a></p>`);
+const STAFF_KIND = {
+  therapist: { title: 'Therapist sign-in', blurb: 'Sign in to your clients, schedule and enquiries.', path: '/staff/therapist' },
+  practice_manager: { title: 'Practice manager sign-in', blurb: 'Sign in to manage your team, programmes, forms and settings.', path: '/staff/practice' },
+  _: { title: 'Team sign-in', blurb: 'For therapists and practice managers.', path: '/staff' },
+};
+const kindOf = k => STAFF_KIND[k] || STAFF_KIND._;
+const staffLogin = kind => { const k = kindOf(kind); return page(k.title, `<p><strong style="font-size:18px">${esc(k.title)}</strong></p><p>${esc(k.blurb)} Enter your work email and we'll send a 6-digit code.</p>
+<form method="post" action="/staff/request-code"><input type="hidden" name="as" value="${esc(STAFF_KIND[kind] ? kind : '')}"><input name="email" type="email" autocomplete="email" required placeholder="Your work email">
+<button>Email me a code</button></form><p class="muted">${kind === 'therapist' ? '<a href="/staff/practice">Practice manager sign-in</a>' : kind === 'practice_manager' ? '<a href="/staff/therapist">Therapist sign-in</a>' : '<a href="/staff/therapist">Therapist sign-in</a> · <a href="/staff/practice">Practice manager sign-in</a>'} · <a href="/">Client sign-in</a></p>`); };
 
-const staffVerify = (email, error) => page('Enter code', `${error ? `<p style="color:#b00020">${esc(error)}</p>` : `<p>If that address belongs to the team, we've sent a code. It expires in 10 minutes.</p>`}
-<form method="post" action="/staff/verify"><input type="hidden" name="email" value="${esc(email)}">
+const staffVerify = (email, error, kind) => { const k = kindOf(kind); return page(k.title, `<p><strong style="font-size:18px">${esc(k.title)}</strong></p>${error ? `<p style="color:#b00020">${esc(error)}</p>` : `<p>If that address belongs to the team, we've sent a code. It expires in 10 minutes.</p>`}
+<form method="post" action="/staff/verify"><input type="hidden" name="as" value="${esc(STAFF_KIND[kind] ? kind : '')}"><input type="hidden" name="email" value="${esc(email)}">
 <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="6-digit code">
-<button>Sign in</button></form><p class="muted"><a href="/staff">Start again</a></p>`);
+<button>Sign in</button></form><p class="muted"><a href="${esc(k.path)}">Start again</a></p>`); };
 
 const ROLE_LABEL = { therapist: 'Therapist account (clients and their records)', practice_manager: 'Practice manager account (practice setup and team)' };
 const chooseAccount = accounts => page('Choose account', `<p>This address has more than one account. Which do you want to use now?</p>
@@ -397,14 +404,30 @@ ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on t
 }
 
 function practiceSettings(s, msg, ok) {
-  return read('Practice details', `<p><strong>Practice details</strong></p>
-<p class="muted">The name and colour appear on every page and in every email the app sends.</p>
+  const logo = require('../lib/brand').logoUrl();
+  return wide('Practice details', `<p><strong>Practice details</strong></p>
+<p class="muted">The name, logo and colour appear on every page and in every email the app sends.</p>
 ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
+<div class="grid">
+<section class="card"><h2>Name and colour</h2>
 <form method="post" action="/practice/settings/practice">
 <label for="practice_name">Practice name</label><input id="practice_name" name="practice_name" required maxlength="80" value="${esc(s.practice_name)}">
 <label for="practice_short">Short name (optional, for small spaces)</label><input id="practice_short" name="practice_short" maxlength="30" value="${esc(s.practice_short)}">
-<label for="color_primary">Colour</label><input id="color_primary" name="color_primary" type="color" style="height:48px;padding:4px" value="${esc(s.color_primary)}">
-<button>Save</button></form><p><a href="/practice">Back</a></p>`);
+<label for="color_hex">Colour</label>
+<div style="display:grid;grid-template-columns:64px 1fr;gap:10px;align-items:center"><input id="color_pick" type="color" aria-label="Pick a colour" style="height:46px;padding:3px" value="${esc(/^#[0-9a-f]{6}$/i.test(s.color_primary) ? s.color_primary : '#007c7e')}">
+<input id="color_hex" name="color_primary" required maxlength="7" pattern="#?[0-9A-Fa-f]{3}|#?[0-9A-Fa-f]{6}" placeholder="#007c7e" autocomplete="off" spellcheck="false" style="font-family:monospace" value="${esc(s.color_primary)}"></div>
+<p class="muted" style="margin:2px 0 8px">Type a hex code (such as #007c7e), or pick with the colour box. Buttons use white text, so choose a fairly dark colour.</p>
+<button>Save</button></form>
+<script>(function(){var p=document.getElementById('color_pick'),h=document.getElementById('color_hex');
+function norm(v){v=v.trim().replace(/^#/,'');if(/^[0-9a-fA-F]{3}$/.test(v))v=v.split('').map(function(c){return c+c}).join('');return /^[0-9a-fA-F]{6}$/.test(v)?'#'+v.toLowerCase():null}
+p.addEventListener('input',function(){h.value=p.value});h.addEventListener('input',function(){var n=norm(h.value);if(n)p.value=n})})()</script></section>
+<section class="card"><h2>Logo</h2>
+${logo ? `<img src="${esc(logo)}" alt="Current logo" style="max-width:220px;max-height:100px;object-fit:contain;margin:4px 0">` : '<p class="muted">No logo yet. The practice name is shown instead.</p>'}
+<form method="post" action="/practice/settings/logo" enctype="multipart/form-data"><label for="logo">Upload a logo (PNG, JPEG or WebP, under 500 KB)</label><input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp" required>
+<button>${logo ? 'Replace logo' : 'Upload logo'}</button></form>
+${logo ? '<form method="post" action="/practice/settings/logo" enctype="multipart/form-data"><input type="hidden" name="action" value="remove"><button class="alt">Remove logo</button></form>' : ''}
+<p class="muted">It is shown on the sign-in pages, the side menu and in emails. A wide logo on a transparent or white background works best.</p></section>
+</div>`);
 }
 
 // Practice statistics (practice manager). Numbers only.

@@ -18,7 +18,7 @@ const blocks = require('../lib/blocks');
 const archive = require('../lib/archive');
 
 const router = express.Router();
-const th = A.requireRole('therapist', '/staff', V.forbidden);
+const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
 const LENGTHS = [6, 8, 10, 12];
 const RESUME_DAYS = 28; // reopened within this: same programme carries on; after it: a fresh programme

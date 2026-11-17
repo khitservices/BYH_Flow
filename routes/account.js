@@ -10,7 +10,7 @@ const { audit } = require('../lib/audit');
 const V = require('../views/pages');
 
 const router = express.Router();
-const th = A.requireRole('therapist', '/staff', V.forbidden);
+const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 
 const MSG = {
   details_saved: ['Your details are saved.', true], details_fee: ['Enter the fee like 60 or 60.50.', false],

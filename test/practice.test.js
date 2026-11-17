@@ -36,7 +36,7 @@ function client(ip) {
     for (const c of r.headers.getSetCookie()) { const [kv] = c.split(';'); const i = kv.indexOf('='); jar[kv.slice(0, i)] = kv.slice(i + 1); }
     return { status: r.status, loc: r.headers.get('location'), text: await r.text() };
   };
-  return { get: p => call('GET', p), post: (p, f) => call('POST', p, f) };
+  return { get: p => call('GET', p), post: (p, f) => call('POST', p, f), cookie: () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ') };
 }
 const addStaff = (n, role) => q(`INSERT INTO core.staff (name,email,role) VALUES ($1,$2,$3) RETURNING *`, [n, em(n), role]).then(r => r[0]);
 const last = (to, re) => [...mail.outbox].reverse().find(x => x.to === to && re.test(x.subject));
@@ -363,4 +363,36 @@ test('duplicate email: the enquiry shows who it matches and can be linked or rem
   page = (await cb.get('/therapist/enquiries')).text; assert.match(page, /already registered to a client in this practice/); assert.ok(!page.includes('Dora Dup'));
   await post(cb, `/therapist/enquiries/${x.id}`, { action: 'contact', email: em('dora2') });
   assert.equal((await post(cb, `/therapist/enquiries/${x.id}`, { action: 'consult', date: '2027-07-02', time: '10:00' })).loc, '/therapist/enquiries?msg=booked');
+});
+
+test('sign-in pages say who they are for; the colour takes a hex code; a logo can be uploaded, shown and removed', { skip }, async () => {
+  const anon = client('10.20.30.60');
+  assert.match((await anon.get('/')).text, /Client sign-in/);
+  const th = await anon.get('/therapist'); assert.equal(th.loc, '/staff/therapist');
+  assert.match((await anon.get('/staff/therapist')).text, /Therapist sign-in/); assert.ok(!(await anon.get('/staff/therapist')).text.includes('Client sign-in</strong>'));
+  assert.equal((await anon.get('/practice')).loc, '/staff/practice');
+  assert.match((await anon.get('/staff/practice')).text, /Practice manager sign-in/);
+  const p = await addStaff('Mgr Brand', 'practice_manager'), cp = await staffIn(p.email);
+  const settings = (await cp.get('/practice/settings/practice')).text; assert.match(settings, /id="color_hex"/); assert.match(settings, /type="color"/);
+  const was = (await q(`SELECT color_primary, practice_name FROM core.practice_settings`))[0];
+  for (const [typed, saved] of [['0A7B7D', '#0a7b7d'], ['#C0392B', '#c0392b'], ['#073', '#007733']]) {
+    assert.equal((await cp.post('/practice/settings/practice', { practice_name: was.practice_name || 'Test Practice', color_primary: typed })).status, 200);
+    assert.equal((await q(`SELECT color_primary FROM core.practice_settings`))[0].color_primary, saved);
+  }
+  assert.equal((await cp.post('/practice/settings/practice', { practice_name: 'X', color_primary: 'banana' })).status, 400);
+  assert.equal((await cp.post('/practice/settings/practice', { practice_name: 'X', color_primary: '#ffff99' })).status, 400);       // too pale for white text
+  await cp.post('/practice/settings/practice', { practice_name: was.practice_name || 'Test Practice', color_primary: was.color_primary || '#007c7e' });
+  // logo: a real PNG is accepted, a disguised file and an oversize one are not, and it is public
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const up = async (buf, name, type) => { const fd = new FormData(); fd.append('logo', new Blob([buf], { type }), name); const r = await fetch(`${base}/practice/settings/logo`, { method: 'POST', body: fd, redirect: 'manual', headers: { cookie: cp.cookie() } }); return { status: r.status, text: await r.text() }; };
+  assert.equal((await up(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), 'x.svg', 'image/svg+xml')).status, 400);
+  assert.equal((await up(Buffer.from('not an image at all'), 'x.png', 'image/png')).status, 400);
+  assert.equal((await up(Buffer.concat([png, Buffer.alloc(600 * 1024)]), 'big.png', 'image/png')).status, 400);
+  const ok = await up(png, 'logo.png', 'image/png'); assert.equal(ok.status, 200); assert.match(ok.text, /Logo saved/);
+  const pub = await fetch(`${base}/brand/logo`); assert.equal(pub.status, 200); assert.equal(pub.headers.get('content-type'), 'image/png');
+  assert.match((await anon.get('/')).text, /\/brand\/logo\?v=\d+/);
+  assert.match((await cp.get('/practice')).text, /\/brand\/logo\?v=\d+/);
+  assert.equal((await client().post('/practice/settings/logo', {})).status, 302);                                                   // signed out cannot change it
+  await cp.post('/practice/settings/logo', { action: 'remove' });
+  assert.equal((await fetch(`${base}/brand/logo`)).status, 404);
 });

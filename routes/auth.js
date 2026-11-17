@@ -25,6 +25,9 @@ async function startSession(req, res, opts, auditAction, who) {
 
 // ---------- staff: emailed 6-digit code ----------
 router.get('/staff', (_req, res) => res.send(V.staffLogin()));
+router.get('/staff/therapist', (_req, res) => res.send(V.staffLogin('therapist')));
+router.get('/staff/practice', (_req, res) => res.send(V.staffLogin('practice_manager')));
+const asKind = v => (v === 'therapist' || v === 'practice_manager' ? v : undefined);
 
 router.post('/staff/request-code', async (req, res) => {
   const email = norm(req.body.email);
@@ -42,7 +45,7 @@ router.post('/staff/request-code', async (req, res) => {
       }
     } catch (e) { console.error('[auth] code request failed:', e.message); }
   }
-  res.send(V.staffVerify(email));
+  res.send(V.staffVerify(email, undefined, asKind(req.body.as)));
 });
 
 const enter = (req, res, staff) =>
@@ -51,7 +54,7 @@ const enter = (req, res, staff) =>
 
 router.post('/staff/verify', async (req, res) => {
   const email = norm(req.body.email);
-  const fail = () => res.status(401).send(V.staffVerify(email, "That code didn't work or has expired."));
+  const fail = () => res.status(401).send(V.staffVerify(email, "That code didn't work or has expired.", asKind(req.body.as)));
   if (limited(`verify|${req.ip}`, 20, 10 * 60 * 1000)) return fail();
   const accounts = await A.accountsFor(email);
   if (!accounts.length || !(await A.verifyStaffCode(email, String(req.body.code || '').trim()))) {
@@ -141,7 +144,7 @@ router.get('/logout', async (req, res) => {
 });
 
 // ---------- landing shells (real screens arrive in later phases) ----------
-const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
+const pm = A.requireRole('practice_manager', '/staff/practice', V.forbidden);
 
 router.get('/practice', pm, async (req, res) => {
   const m = await mail.getSettings();
@@ -245,13 +248,33 @@ router.post('/practice/team/:id', pm, async (req, res) => {
   teamPage(req, res, 'Unknown action.', false);
 });
 
+// The logo is public on purpose: it is on the sign-in pages and in emails, before anyone has signed in.
+router.get('/brand/logo', async (_req, res) => {
+  const l = await brand.getLogo();
+  if (!l) return res.status(404).end();
+  res.set({ 'Content-Type': l.logo_type, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" }).send(l.logo);
+});
+const upload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: brand.MAX_LOGO + 1, files: 1, fields: 4 } });
+router.post('/practice/settings/logo', pm, (req, res, next) => upload.single('logo')(req, res, err => {
+  if (err) return res.status(400).send(V.practiceSettings(brandNow(), 'That picture is too large. Use one under 500 KB.', false));
+  next();
+}), async (req, res) => {
+  const who = { actorType: 'staff', actorId: req.session.staff.id };
+  if (req.body && req.body.action === 'remove') { await brand.removeLogo(req.session.staff.id); await audit(req, 'practice.logo_removed', who); return res.send(V.practiceSettings(brandNow(), 'Logo removed.', true)); }
+  if (!req.file) return res.status(400).send(V.practiceSettings(brandNow(), 'Choose a picture to upload.', false));
+  const r = await brand.saveLogo(req.file.buffer, req.session.staff.id);
+  if (r.error) return res.status(400).send(V.practiceSettings(brandNow(), r.error, false));
+  await audit(req, 'practice.logo_saved', who);
+  res.send(V.practiceSettings(brandNow(), 'Logo saved.', true));
+});
+
 // ---------- settings: practice name and colour ----------
 const brandNow = () => ({ practice_name: brand.BRAND.practiceName, practice_short: brand.BRAND.practiceShort, color_primary: brand.BRAND.colorPrimary });
 router.get('/practice/settings/practice', pm, (_req, res) => res.send(V.practiceSettings(brandNow())));
 
 router.post('/practice/settings/practice', pm, async (req, res) => {
   const { error, values } = brand.validate(req.body);
-  if (error) return res.status(400).send(V.practiceSettings({ practice_name: req.body.practice_name, practice_short: req.body.practice_short, color_primary: brand.BRAND.colorPrimary }, error, false));
+  if (error) return res.status(400).send(V.practiceSettings({ practice_name: req.body.practice_name, practice_short: req.body.practice_short, color_primary: req.body.color_primary }, error, false));
   await brand.save(values, req.session.staff.id);
   await audit(req, 'practice.settings_saved', { actorType: 'staff', actorId: req.session.staff.id });
   res.send(V.practiceSettings(brandNow(), 'Saved.', true));
