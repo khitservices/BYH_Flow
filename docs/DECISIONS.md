@@ -241,3 +241,7 @@
 - Therapist record lists every block; the client area shows the current block and the names of earlier ones.
 - Practice manager sees counts only by programme name: blocks started, sessions delivered, clients on a second or later block, standalone single sessions. No names, no per-client prices. (Income totals: not wanted for now.)
 - Parked: two blocks running at once.
+
+## App layout (17 Nov 2026)
+- Signed-in pages use an app shell: a left menu per role (therapist: Home, Schedule, Book a session, Enquiries, Clients, Archive, My account; practice manager: Overview, Team, Statistics, Programmes, Forms, Email, Practice details; client: Home, growing in step 6) with the current page highlighted, name and Sign out at the foot. On a phone the menu becomes a scrolling bar across the top. Public pages (sign-in, enquiry form, signing links) stay narrow and plain.
+- Set once per request (lib/ctx.js, from requireRole), so every page gets the menu without each route passing it. Clients list is now a table with status pills. Other list pages to get the same treatment as they are touched.

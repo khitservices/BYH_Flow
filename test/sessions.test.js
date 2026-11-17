@@ -76,11 +76,11 @@ test('booking emails the client the date with a calendar file; a past date just 
   assert.match(m.icalEvent.content, /METHOD:REQUEST/); assert.match(m.icalEvent.content, /DTSTART:20270701T093000Z/); assert.match(m.icalEvent.content, /DTEND:20270701T103000Z/);
   assert.match(m.icalEvent.content, new RegExp(`UID:appointment-${a.id}@`)); assert.match(m.icalEvent.content, /SEQUENCE:0/);
   assert.match((await c.get(`/therapist/client/${cid}`)).text, /Next: Thursday 1 July 2027 at 10:30/);
-  assert.match((await c.get('/therapist/clients')).text, /session 1 of 8/);
+  assert.match((await c.get('/therapist/clients')).text, /[Ss]ession 1 of 8/);
   const n2 = mail.outbox.length;
   assert.equal((await c.post(`/therapist/client/${cid}/sessions`, { date: '2026-01-05', time: '09:00' })).loc, `/therapist/client/${cid}/sessions?msg=recorded`);
   assert.equal(mailsTo(em('alex'), n2).length, 0);
-  assert.match((await c.get('/therapist/clients')).text, /session 2 of 8/); // a delivered session moves the count on
+  assert.match((await c.get('/therapist/clients')).text, /[Ss]ession 2 of 8/); // a delivered session moves the count on
   const page = await c.get(`/therapist/client/${cid}/sessions`);
   assert.match(page.text, /Coming up/); assert.match(page.text, /Monday 5 January 2026 at 09:00/);
 });

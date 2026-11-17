@@ -265,7 +265,7 @@ test('landing pages: each user type gets their own overview, and the manager see
   await add(ct, { name: 'Secret Clientname', email: em('secretc'), first_date: '2027-09-20', first_time: '10:00' });
   const th = (await ct.get('/therapist')).text;
   assert.match(th, /Hello Thera/); assert.match(th, /<h2>Enquiries<\/h2><span class="stat">1<\/span>/); assert.match(th, /<h2>Clients<\/h2><span class="stat">1<\/span>/); assert.match(th, /Sign out/);
-  assert.match(th, /class="grid"/); assert.match(th, /max-width:1040px/);                                  // the wide, card layout
+  assert.match(th, /class="grid"/); assert.match(th, /class="side"/); assert.match(th, /href="\/therapist\/clients"/);                                  // the wide, card layout
   const pm = (await cp.get('/practice')).text;
   assert.match(pm, /Practice overview/); assert.match(pm, /<h2>Team<\/h2>/); assert.match(pm, /<h2>Programmes<\/h2>/); assert.match(pm, /Sign out/);
   for (const hidden of ['Hidden Enquirer', 'Secret Clientname', 'Clientname', em('hide')]) assert.ok(!pm.includes(hidden), hidden);

@@ -3,31 +3,84 @@ const { BRAND } = require('../lib/brand');
 const { esc } = require('../lib/mail');
 const T = require('../lib/time');
 
-// w: undefined = narrow (sign-in, public pages), 'read' = forms and settings, 'wide' = working pages that fill a desktop screen.
-// nav: { who, home } adds a top bar with the person's name, a Home link and Sign out.
+// Menus per signed-in role. A page is wrapped in the app shell (side menu + content area) whenever someone is signed in;
+// public pages (sign-in, enquiry form, signing link) stay narrow and plain.
+const MENUS = {
+  therapist: [
+    { label: 'Home', href: '/therapist', exact: true },
+    { group: 'Work' }, { label: 'Schedule', href: '/therapist/schedule' }, { label: 'Book a session', href: '/therapist/book' },
+    { group: 'People' }, { label: 'Enquiries', href: '/therapist/enquiries' }, { label: 'Clients', href: '/therapist/clients' }, { label: 'Archive', href: '/therapist/archive' },
+    { group: 'You' }, { label: 'My account', href: '/therapist/account' },
+  ],
+  practice_manager: [
+    { label: 'Overview', href: '/practice', exact: true },
+    { group: 'Practice' }, { label: 'Team', href: '/practice/team' }, { label: 'Statistics', href: '/practice/stats' },
+    { group: 'Set-up' }, { label: 'Programmes', href: '/practice/programmes' }, { label: 'Forms', href: '/practice/forms' },
+    { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
+  ],
+  client: [
+    { label: 'Home', href: '/journal', exact: true },
+  ],
+};
+const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
+
+// w: undefined = narrow (sign-in, public pages); anything else only matters for the signed-out layout.
 function page(title, body, w, nav) {
-  const bar = nav ? `<div class="bar"><span><strong>${esc(BRAND.practiceName)}</strong></span><span>${esc(nav.who)} · ${nav.home ? `<a href="${esc(nav.home)}">Home</a> · ` : ''}<a href="/logout">Sign out</a></span></div>` : '';
-  return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
-<style>
-body{font-family:system-ui,Arial,sans-serif;background:#f6f8f8;color:#222;margin:0}
+  const ctx = require('../lib/ctx').get();
+  const shellOn = !!(ctx && MENUS[ctx.role]);
+  const css = `
+body{font-family:system-ui,Arial,sans-serif;background:#f4f6f7;color:#222;margin:0}
 main{max-width:440px;margin:8vh auto;padding:28px;background:#fff;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.08)}
-main.read{max-width:700px;margin:3vh auto}main.wide{max-width:1040px;margin:3vh auto}main.nav{margin-top:0}
-.bar{max-width:1040px;margin:0 auto;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;font-size:14px}
 h1{font-size:20px;color:${BRAND.colorPrimary};margin:0 0 16px}
 label{display:block;font-size:14px;font-weight:600;margin-top:12px}label.check{font-weight:400;display:flex;gap:8px;align-items:center}label.check input{width:auto;margin:0}
 button.alt{background:#fff;color:${BRAND.colorPrimary};border:1px solid ${BRAND.colorPrimary}}
 input,button,select,textarea{font-size:16px;padding:11px;width:100%;box-sizing:border-box;margin:6px 0;border-radius:6px}
 input,textarea{border:1px solid #bbb} button{border:0;background:${BRAND.colorPrimary};color:#fff;cursor:pointer}
-main.read form,main.wide form{max-width:560px}
 a{color:${BRAND.colorPrimary}} .muted{color:#666;font-size:14px} form.inline{display:inline}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:16px 0}
 .card{border:1px solid #e3e8e8;border-radius:10px;padding:16px;background:#fff;display:flex;flex-direction:column;gap:6px}
 .card h2{font-size:15px;margin:0;color:#444}.card p{margin:2px 0}.card .links{margin-top:auto;padding-top:8px}.card .links a{display:inline-block;margin-right:14px}
-.stat{font-size:32px;font-weight:700;color:${BRAND.colorPrimary};line-height:1.1}
+.stat{font-size:32px;font-weight:700;color:${BRAND.colorPrimary};line-height:1.1}`;
+  if (!shellOn) {
+    return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
+<style>${css}
+main.read{max-width:700px;margin:3vh auto}main.wide{max-width:1040px;margin:3vh auto}
+main.read form,main.wide form{max-width:560px}
 .cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));column-gap:32px}
 @media (max-width:700px){main,main.read,main.wide{margin:0;border-radius:0;box-shadow:none;padding:18px;min-height:100vh}.cols{display:block}}
-</style></head><body>${bar}<main class="${w || ''}${nav ? ' nav' : ''}"><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
+</style></head><body><main class="${w || ''}"><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
+  }
+  const items = MENUS[ctx.role];
+  const links = items.filter(i => i.href);
+  // the active item is the one whose address is the longest match for this page
+  const here = links.filter(i => (i.exact ? ctx.path === i.href : ctx.path === i.href || ctx.path.startsWith(i.href + '/'))).sort((a, b) => b.href.length - a.href.length)[0];
+  const menu = items.map(i => i.group ? `<p class="grp">${esc(i.group)}</p>` : `<a class="item${i === here ? ' on' : ''}" href="${esc(i.href)}"${i === here ? ' aria-current="page"' : ''}>${esc(i.label)}</a>`).join('');
+  return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
+<style>${css}
+.app{display:flex;min-height:100vh}
+.side{width:236px;flex:none;background:#fff;border-right:1px solid #e3e8e8;position:sticky;top:0;height:100vh;box-sizing:border-box;padding:20px 12px;display:flex;flex-direction:column;overflow-y:auto}
+.brand{font-weight:700;font-size:16px;color:${BRAND.colorPrimary};padding:0 10px 2px}.role{font-size:12px;color:#777;padding:0 10px 16px}
+.side nav{display:flex;flex-direction:column;gap:2px}
+.grp{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#888;margin:16px 10px 4px}
+.item{display:block;padding:9px 10px;border-radius:8px;color:#333;text-decoration:none;font-size:15px}
+.item:hover{background:#f1f5f5}.item.on{background:${BRAND.colorPrimary};color:#fff;font-weight:600}
+.me{margin-top:auto;padding:14px 10px 0;border-top:1px solid #e3e8e8;font-size:13px;color:#555}.me a{display:inline-block;margin-top:4px}
+.main{flex:1;min-width:0}
+.content{max-width:1120px;padding:28px 40px 60px}
+.content form{max-width:560px}.content .card form,.content .cols form{max-width:none}
+.content > p:first-child strong{font-size:22px}
+.pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:#e6f2f2;color:#075e60;white-space:nowrap}.pill.pre{background:#fff3d6;color:#7a5200}.pill.off{background:#eee;color:#555}
+table.list{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e8e8;border-radius:10px;overflow:hidden;font-size:15px}table.list th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#777;padding:10px 14px;background:#fafbfb}table.list td{padding:12px 14px;border-top:1px solid #eef1f1;vertical-align:top}table.list tr:hover td{background:#f8fbfb}
+.cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));column-gap:32px}
+details{margin:6px 0}summary{cursor:pointer;color:${BRAND.colorPrimary};font-weight:600;padding:4px 0}
+@media (max-width:820px){.app{display:block}.side{position:static;width:auto;height:auto;padding:10px 12px;border-right:0;border-bottom:1px solid #e3e8e8}
+ .side nav{flex-direction:row;overflow-x:auto;gap:4px}.grp{display:none}.item{white-space:nowrap}.me{border:0;padding:8px 10px 0}
+ .content{padding:18px 16px 40px}.cols{display:block}}
+</style></head><body><div class="app"><aside class="side"><div class="brand">${esc(BRAND.practiceName)}</div><div class="role">${esc(ROLE_NAME[ctx.role])}</div>
+<nav aria-label="Main">${menu}</nav><div class="me">${esc(ctx.who)}<br><a href="/logout">Sign out</a></div></aside>
+<div class="main"><div class="content">${body.replace(/<p><a href="\/(therapist|practice|journal)">(Back|Home)<\/a><\/p>/g, '')}</div></div></div></body></html>`;
 }
 
 const wide = (t, b) => page(t, b, 'wide'), read = (t, b) => page(t, b, 'read');
@@ -109,12 +162,13 @@ const note = (msg, ok) => (msg ? `<p role="status" style="color:${ok === false ?
 const day = d => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
 
 function clients(rows) {
-  const row = r => `<p style="border-top:1px solid #ddd;padding:12px 0;margin:0"><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a><br>
-<span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : r.pos ? ` · session ${r.pos.on} of ${r.pos.of}` : r.ic_text ? ` · ${esc(r.ic_text)}` : ' · no consultation date yet'}${r.under16 ? ' · under 16' : ''}${r.next ? `<br>Next: ${esc(r.next)}` : ''}${r.wants_change ? '<br><strong style="color:#8a4a00">Has asked to change a session</strong>' : ''}</span></p>`;
-  return wide('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
-<div class="cols">${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}</div>
-<form method="get" action="/therapist/clients/add" style="border-top:1px solid #ddd;padding-top:12px"><button>Add a client</button></form>
-<p><a href="/therapist/archive">Archive</a> · <a href="/therapist">Back</a></p>`);
+  const pill = r => `<span class="pill${r.status === 'consultation' || r.status === 'attended' ? ' pre' : r.status === 'closed' || r.status === 'readonly' ? ' off' : ''}">${STATUS[r.status]}</span>`;
+  const prog = r => (r.status === 'closed' ? '' : r.pos ? `Session ${r.pos.on} of ${r.pos.of}${r.programme_name ? `<br><span class="muted">${esc(r.programme_name)}</span>` : ''}` : r.ic_text ? `Consultation ${esc(r.ic_text)}` : '<span class="muted">No consultation date yet</span>');
+  const row = r => `<tr><td><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a>${r.under16 ? ' <span class="muted">(under 16)</span>' : ''}</td><td>${pill(r)}</td><td>${prog(r)}</td><td>${r.next ? esc(r.next) : '<span class="muted">-</span>'}${r.wants_change ? '<br><strong style="color:#8a4a00">Asked to change a session</strong>' : ''}</td></tr>`;
+  return wide('Clients', `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><p style="margin:0"><strong>Your clients</strong></p><p class="muted" style="margin:2px 0 0">Only you can see these.</p></div>
+<form method="get" action="/therapist/clients/add" style="max-width:none;width:auto"><button style="width:auto;padding:10px 20px">Add a client</button></form></div>
+${rows.length ? `<div style="overflow-x:auto;margin-top:16px"><table class="list"><thead><tr><th>Name</th><th>Status</th><th>Programme</th><th>Next session</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>` : '<p class="muted">No clients yet.</p>'}
+<p class="muted"><a href="/therapist/archive">Archive</a> holds people who did not proceed.</p>`);
 }
 
 function clientAdd(f, msg) {
