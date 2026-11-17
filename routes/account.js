@@ -51,6 +51,7 @@ router.post('/therapist/account', th, async (req, res) => {
     const moved = req.body.scope === 'all'
       ? await q(`UPDATE clinical.clients SET therapist_id=$2 WHERE therapist_id=$1 AND status <> 'closed' RETURNING id, name, email, status`, [me.id, to.id])
       : await q(`UPDATE clinical.clients SET therapist_id=$2 WHERE therapist_id=$1 AND id = ANY($3::int[]) RETURNING id, name, email, status`, [me.id, to.id, ids]);
+    if (req.body.scope === 'all') await q(`UPDATE clinical.enquiries SET therapist_id=$2 WHERE therapist_id=$1 AND stage <> 'converted'`, [me.id, to.id]);
     for (const c of moved) {
       await audit(req, 'client.handed_over', { ...who, subjectType: 'client', subjectId: c.id, detail: { to: to.id } });
       if (c.status === 'closed') continue;

@@ -36,7 +36,8 @@ router.get('/therapist', th, async (req, res) => {
   const today = await q(`SELECT a.starts_at, c.name FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
     WHERE c.therapist_id=$1 AND a.status='booked' AND a.starts_at >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2
       AND a.starts_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY a.starts_at`, [me.id, T.ZONE]);
-  res.send(V.therapistHome(me.name, n, today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name }))));
+  const [{ k }] = await q(`SELECT count(*)::int k FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new'`, [me.id]);
+  res.send(V.therapistHome(me.name, n, today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })), k));
 });
 
 router.get('/therapist/clients', th, async (req, res) => {
@@ -56,7 +57,14 @@ async function sendInvite(client, therapist) {
   } catch (e) { console.error('[clients] invite failed:', e.message); return false; }
 }
 
-router.get('/therapist/clients/add', th, (_req, res) => res.send(V.clientAdd({})));
+// "Turn into a client" from an enquiry: pre-fills the form. The therapist still checks it and, for a child, records consent.
+router.get('/therapist/clients/add', th, async (req, res) => {
+  const e = req.query.from ? await one(`SELECT * FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND stage <> 'converted'`, [Number(req.query.from) || 0, req.session.staff.id]) : null;
+  if (!e) return res.send(V.clientAdd({}));
+  res.send(V.clientAdd(e.for_child
+    ? { from_enquiry: e.id, name: e.child_name, under16: true, guardian_name: e.name, guardian_email: e.email, guardian_phone: e.phone }
+    : { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone }));
+});
 
 router.post('/therapist/clients/add', th, async (req, res) => {
   const me = req.session.staff, b = req.body;
@@ -70,6 +78,8 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   let prior = Number(b.sessions_before_app);
   if (!Number.isInteger(prior) || prior < 0) prior = 0;
   f.sessions_before_app = Math.min(prior, f.sessions - 1);
+  const enq = b.from_enquiry ? await one(`SELECT id FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND stage <> 'converted'`, [Number(b.from_enquiry) || 0, me.id]) : null;
+  if (enq) f.from_enquiry = enq.id;
   const again = msg => res.status(400).send(V.clientAdd(f, msg));
 
   if (!f.name) return again("Enter the client's name.");
@@ -96,6 +106,10 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   const who = { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id };
   await audit(req, 'client.created', { ...who, detail: { under16: f.under16 } });
   if (f.under16) await audit(req, 'client.consent_attested', who);
+  if (enq) {
+    await q(`UPDATE clinical.enquiries SET stage='converted', converted_client_id=$2 WHERE id=$1 AND therapist_id=$3`, [enq.id, client.id, me.id]);
+    await audit(req, 'enquiry.converted', { ...who, subjectType: 'enquiry', subjectId: enq.id });
+  }
   const sent = await sendInvite(client, me);
   if (sent) await audit(req, 'client.invited', who);
   // Optional first session, booked in the same step (as in the BYH app).

@@ -44,6 +44,7 @@ app.get('/healthz', async (_req, res) => {
 app.use(require('./lib/brand').ensureLoaded);
 app.use(require('./routes/auth'));
 app.use(require('./routes/sessions').router);
+app.use(require('./routes/enquiries').router);
 app.use(require('./routes/therapist'));
 app.use(require('./routes/account'));
 

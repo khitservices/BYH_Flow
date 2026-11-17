@@ -230,11 +230,13 @@ router.post('/practice/team/:id', pm, async (req, res) => {
   }
   if (action === 'remove') {
     const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [staff.id]);
+    const [{ k }] = await q(`SELECT count(*)::int k FROM clinical.enquiries WHERE therapist_id=$1 AND stage <> 'converted'`, [staff.id]);
     let moved = 0;
-    if (n > 0) {
+    if (n + k > 0) {
       const to = await one(`SELECT id, name FROM core.staff WHERE id=$1 AND role='therapist' AND status='active' AND id<>$2`, [Number(req.body.reassign_to) || 0, staff.id]);
-      if (!to) return teamPage(req, res, `${staff.name} has ${n} client${n === 1 ? '' : 's'}. Choose the therapist who will take them over, then remove.`, false);
+      if (!to) return teamPage(req, res, `${staff.name} has ${n} client${n === 1 ? '' : 's'} and ${k} open enquir${k === 1 ? 'y' : 'ies'}. Choose the therapist who will take them over, then remove.`, false);
       moved = (await q(`UPDATE clinical.clients SET therapist_id=$2 WHERE therapist_id=$1 RETURNING id`, [staff.id, to.id])).length;
+      await q(`UPDATE clinical.enquiries SET therapist_id=$2 WHERE therapist_id=$1 AND stage <> 'converted'`, [staff.id, to.id]);
       await audit(req, 'team.clients_reassigned', { actorType: 'staff', actorId: me.id, subjectType: 'staff', subjectId: to.id, detail: { from: staff.id, count: moved } });
     }
     await q(`UPDATE core.staff SET status='removed', close_requested_at=NULL, cal_feed_hash=NULL WHERE id=$1`, [staff.id]);

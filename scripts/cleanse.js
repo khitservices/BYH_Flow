@@ -10,6 +10,7 @@ const { q, one, pool } = require('../lib/db');
   if (!['keepteam', 'full'].includes(action) || flag !== '--confirm' || phrase !== 'ERASE')
     throw new Error('usage: cleanse.js keepteam|full --confirm ERASE');
   await q(`DELETE FROM clinical.appointments`);
+  await q(`DELETE FROM clinical.enquiries`);
   await q(`DELETE FROM clinical.clients`);          // cascades to client tokens and sessions
   if (action === 'full') {
     await q(`DELETE FROM core.staff WHERE role='therapist'`); // cascades to their tokens and sessions

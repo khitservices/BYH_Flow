@@ -104,7 +104,7 @@ ${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}
 function clientAdd(f, msg) {
   return page('Add a client', `<p><strong>Add a client</strong></p>
 <p class="muted">They are emailed an invitation to their own client area.</p>${note(msg, false)}
-<form method="post" action="/therapist/clients/add">
+<form method="post" action="/therapist/clients/add">${f.from_enquiry ? `<input type="hidden" name="from_enquiry" value="${esc(f.from_enquiry)}">` : ''}
 <label for="name">Name</label><input id="name" name="name" required value="${esc(f.name)}">
 <label for="email">Email (they sign in with this)</label><input id="email" name="email" type="email" required value="${esc(f.email)}">
 <label for="phone">Phone (optional)</label><input id="phone" name="phone" type="tel" value="${esc(f.phone)}">
@@ -152,11 +152,11 @@ ${sec('Record', closed
 }
 
 // ---- therapist account: home, booking and schedule ----
-function therapistHome(who, clientCount, today) {
+function therapistHome(who, clientCount, today, newEnquiries = 0) {
   return page('Therapist', `<p>Signed in as <strong>${esc(who)}</strong> (Therapist).</p>
 <section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Today</strong></p>
 ${today.length ? today.map(a => `<p style="margin:4px 0">${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted" style="margin:0">No sessions today.</p>'}</section>
-<p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p><p><a href="/therapist/account">Account</a></p>
+<p><a href="/therapist/enquiries">Enquiries${newEnquiries ? ` (${newEnquiries} new)` : ''}</a></p><p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p><p><a href="/therapist/account">Account</a></p>
 <p><a href="/logout">Sign out</a></p>`);
 }
 
@@ -270,8 +270,64 @@ function practiceStats(st) {
 <div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:14px;width:100%" aria-label="Counts by therapist">
 <thead><tr style="text-align:left"><th>Therapist</th><th>Active clients</th><th>Upcoming sessions</th><th>Delivered (30 days)</th><th>Cancelled (30 days)</th><th>Change requests</th></tr></thead>
 <tbody>${st.therapists.map(r => row(r.name + (r.status === 'suspended' ? ' (suspended)' : ''), r)).join('')}${row('Practice total', t, true)}</tbody></table></div>
-<p class="muted">Enquiry counts by route and stage arrive with the enquiries section.</p>
+<p style="margin-bottom:2px"><strong>Enquiries</strong></p>
+<p class="muted" style="margin:2px 0">By route: ${Object.keys(CHANNEL).map(k => `${esc(CHANNEL[k])} ${(st.enquiries.channel[k] || 0)}`).join(' · ')}</p>
+<p class="muted" style="margin:2px 0">By stage: ${Object.keys(STAGE).map(k => `${esc(STAGE[k])} ${(st.enquiries.stage[k] || 0)}`).join(' · ')}</p>
 <p><a href="/practice">Back</a></p>`);
 }
 
-module.exports = { practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+// ---------- enquiries ----------
+const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Phone' };
+const STAGE = { new: 'New', consultation: 'Consultation set', proceeding: 'Proceeding', not_proceeding: 'Not proceeding', converted: 'Now a client' };
+
+function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) {
+  const who = therapist
+    ? `<p class="muted">Your enquiry will go to ${esc(therapist.name)}.</p><input type="hidden" name="slug" value="${esc(slug)}">`
+    : (therapists && therapists.length
+      ? `<label for="th">Who would you like to hear from?</label><select id="th" name="therapist" ${sel} required><option value="">Choose…</option>${therapists.map(t => `<option value="${t.id}"${String(pick) === String(t.id) ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`
+      : '');
+  if (!therapist && !(therapists && therapists.length)) return page('Enquiry', '<p>We are not taking enquiries online at the moment. Please get in touch another way.</p>');
+  return page('Get in touch', `<p><strong>Get in touch</strong></p><p class="muted">Tell us how to reach you and we will be in touch. Please do not put any health details in this form.</p>${note(error, false)}
+<form method="post" action="/enquire"><input type="hidden" name="src" value="${esc(src)}">${who}
+<label for="n">Your name</label><input id="n" name="name" required maxlength="100" value="${esc(f.name)}">
+<label for="e">Email</label><input id="e" name="email" type="email" value="${esc(f.email)}">
+<label for="p">Phone</label><input id="p" name="phone" type="tel" value="${esc(f.phone)}">
+<p class="muted" style="margin:2px 0">An email or a phone number is needed.</p>
+<label class="check"><input type="checkbox" name="for_child" ${f.for_child ? 'checked' : ''}> This enquiry is for a child under 16</label>
+<label for="c">Child's name (if applicable)</label><input id="c" name="child_name" maxlength="100" value="${esc(f.child_name)}">
+<div style="position:absolute;left:-9999px" aria-hidden="true"><label for="co">Leave this empty</label><input id="co" name="company" tabindex="-1" autocomplete="off"></div>
+<button>Send enquiry</button></form>`);
+}
+const enquireThanks = msg => page('Thank you', `<p>${esc(msg || 'Thank you. Your enquiry has been sent and you will hear back soon.')}</p>`);
+
+function therapistEnquiries(rows, links, msg, ok) {
+  const post = (id, action, inner) => `<form method="post" action="/therapist/enquiries/${id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
+  const card = e => `<section style="border-top:1px solid #ddd;padding:12px 0" aria-label="${esc(e.name)}">
+<p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ` <span class="muted">(for ${esc(e.child_name || 'a child')}, under 16)</span>` : ''}<br>
+<span class="muted">${esc(STAGE[e.stage])} · ${esc(CHANNEL[e.channel])} · ${day(e.created_at)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.ic_text ? `<br>Consultation: ${esc(e.ic_text)}` : ''}</span></p>
+${e.stage === 'converted' ? '' : `<details><summary>Manage</summary>
+${post(e.id, 'consult', `<label for="d${e.id}">Consultation date</label><input id="d${e.id}" name="date" type="date" required value="${e.ic_at ? T.inputDate(e.ic_at) : ''}"><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="${e.ic_at ? T.timeShort(e.ic_at) : '10:00'}"><button class="alt">${e.ic_at ? 'Move consultation' : 'Set consultation'}${e.email ? ' and email them' : ''}</button>`)}
+${e.ic_at ? post(e.id, 'clear_consult', '<button class="alt">Remove consultation</button>') : ''}
+${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
+${e.stage !== 'proceeding' ? post(e.id, 'proceeding', '<button class="alt">Mark as proceeding</button>') : ''}
+${e.stage !== 'not_proceeding' ? post(e.id, 'not_proceeding', '<button class="alt">Not proceeding</button>') : post(e.id, 'new', '<button class="alt">Reopen</button>')}
+<form method="get" action="/therapist/clients/add"><input type="hidden" name="from" value="${e.id}"><button>Turn into a client</button></form>
+${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details>`}</section>`;
+  return page('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">Only you can see these.</p>${note(msg, ok)}
+${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p>'}
+<details style="border-top:1px solid #ddd;padding-top:12px"><summary>Add an enquiry taken by phone</summary>
+<form method="post" action="/therapist/enquiries/add"><label for="an">Name</label><input id="an" name="name" required maxlength="100">
+<label for="ae">Email</label><input id="ae" name="email" type="email"><label for="ap">Phone</label><input id="ap" name="phone" type="tel">
+<label class="check"><input type="checkbox" name="for_child"> For a child under 16</label>
+<label for="ac">Child's name (if applicable)</label><input id="ac" name="child_name" maxlength="100">
+<label for="ano">Notes</label><input id="ano" name="notes" maxlength="1000"><button>Add enquiry</button></form></details>
+<details style="border-top:1px solid #ddd;padding-top:12px;margin-top:12px"><summary>Enquiry links</summary>
+<p class="muted">Your own page (use this for your private page, Google ads and Facebook by adding the route shown):</p>
+<p style="word-break:break-all"><a href="${esc(links.mine)}">${esc(links.mine)}</a></p>
+<p class="muted" style="margin:2px 0">For a Google ad add <code>?src=google</code>; for Facebook add <code>?src=facebook</code>.</p>
+<p class="muted">The practice's form (asks which therapist; for the website):</p>
+<p style="word-break:break-all"><a href="${esc(links.practice)}">${esc(links.practice)}</a></p></details>
+<p><a href="/therapist">Back</a></p>`);
+}
+
+module.exports = { enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

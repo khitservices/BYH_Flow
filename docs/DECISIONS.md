@@ -175,4 +175,15 @@
 - The practice manager's statistics page (`/practice/stats`) is counts only: per therapist (named, as staff) the number of active clients, upcoming sessions, sessions delivered and cancelled in the last 30 days and pending change requests, plus practice totals. Client names, emails and notes are never queried for this page. Enquiry counts by route and stage arrive with the enquiries step.
 - BYH hid small numbers (fewer than 5) and showed no per-therapist breakdown. Kev asked for counts by therapist and the Team page already shows each therapist's client count, so exact counts are shown. Revisit if a larger practice wants suppression.
 - Moving clients between therapists needed no new tool: handover (therapist account page) and removal-reassignment (Team page) already cover it.
-- BYH's `/admin/cleanse` web route is replaced by `scripts/cleanse.js`, run on the server only: `keepteam` clears clients and sessions, `full` also clears therapists; practice managers and settings are always kept. It needs `--confirm ERASE`. There is deliberately no web page for it.
+- BYH's `/admin/cleanse` web route is replaced by `scripts/cleanse.js`, run on the server only: `keepteam` clears clients, sessions and enquiries, `full` also clears therapists; practice managers and settings are always kept. It needs `--confirm ERASE`. There is deliberately no web page for it.
+
+## Step 5a: enquiries (documents follow as 5b)
+- Every enquiry belongs to one therapist from the moment it arrives; the practice manager sees counts only (by route and by stage, on the statistics page).
+- Routes: `website`, `therapist_page`, `google`, `facebook`, `phone`. The practice form (`/enquire`) asks which therapist (Kev's choice; preselected when there is only one). A therapist's own page is `/enquire/t/<12-hex slug>`; `?src=google` or `?src=facebook` on either link records that route. Website is link-only for now (no embed).
+- The public form takes name, email and/or phone, and "for a child under 16" with the child's name. It never asks why the person is enquiring. A hidden field catches bots, and accepted enquiries are limited to 5 per connection per hour.
+- The therapist is emailed "you have a new enquiry" with no personal details in the message.
+- Phone capture is a form inside the signed-in therapist's Enquiries page.
+- Stages: new, consultation set, proceeding, not proceeding, now a client. Setting a consultation date emails the enquirer a calendar file (when they gave an email); moving it replaces the entry; "not proceeding" or deleting cancels it.
+- "Turn into a client" pre-fills the add-client form (for a child: the child's name, and the parent as guardian). Saving marks the enquiry converted. Consent for under-16s is still recorded by the therapist as before.
+- Open enquiries move with the clients when a therapist is removed (a taker is now required if they have open enquiries) and when "hand over all" is used.
+- Deliberately not in 5a: no acknowledgement email to the enquirer; consultations do not yet appear on the schedule or calendar feed; ITC's agreement stages (agreement ready, sent, signed), booking letter and agreement documents, and follow-up prompts belong to 5b.
