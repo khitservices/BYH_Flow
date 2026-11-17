@@ -109,7 +109,7 @@ test('attended → form emailed → signed in the app → stored in the client f
   assert.match(r.loc, /^\/therapist\/client\/\d+/);
   const rec = (await ca.get(r.loc.split('?')[0])).text; assert.match(rec, /Open signed copy/);
   const cl = await clientIn(em('alice')); assert.ok(cl);
-  const home = (await cl.get('/journal')).text; assert.match(home, /Your forms/); assert.match(home, /Open my copy/);
+  const home = (await cl.get('/journal')).text; assert.match(home, /<h2>Forms<\/h2>/); assert.match(home, /Open my copy/);
   const mine2 = await cl.get(`/client/forms/${f.id}/pdf`); assert.equal(mine2.status, 200);
   assert.equal((await anon.get(`/client/forms/${f.id}/pdf`)).status, 302);
 });
@@ -181,6 +181,6 @@ test('form templates: the manager adds and edits them, sent forms keep their wor
   // retired templates are no longer offered, and cannot be sent
   await post(cp, `/practice/forms/${tpl.id}`, { action: 'retire' });
   assert.equal((await post(ct, `/therapist/enquiries/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' })).loc, '/therapist/enquiries?msg=form_template');
-  assert.match((await cp.get('/practice')).text, /Forms \(agreements/);
+  assert.match((await cp.get('/practice')).text, /<h2>Forms<\/h2>/);
   await q(`DELETE FROM documents.forms WHERE template_id=$1`, [tpl.id]); await q(`DELETE FROM core.form_templates WHERE id=$1`, [tpl.id]);
 });

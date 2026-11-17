@@ -34,12 +34,18 @@ const own = (req) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapi
 
 router.get('/therapist', th, async (req, res) => {
   const me = req.session.staff;
-  const [{ n }] = await q(`SELECT count(*)::int n FROM clinical.clients WHERE therapist_id=$1 AND status <> 'closed'`, [me.id]);
   const today = await q(`SELECT a.starts_at, c.name FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
     WHERE c.therapist_id=$1 AND a.status='booked' AND a.starts_at >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2
       AND a.starts_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY a.starts_at`, [me.id, T.ZONE]);
-  const [{ k }] = await q(`SELECT count(*)::int k FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new'`, [me.id]);
-  res.send(V.therapistHome(me.name, n, today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })), k));
+  const d = await one(`SELECT
+      (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status='active')::int AS active,
+      (SELECT count(DISTINCT c.id) FROM clinical.clients c JOIN clinical.appointments a ON a.client_id=c.id
+         WHERE c.therapist_id=$1 AND c.status <> 'closed' AND a.status='booked' AND a.change_requested_at IS NOT NULL AND a.starts_at > now())::int AS wants_change,
+      (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new')::int AS enq_new,
+      (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND ic_at > now() AND stage <> 'not_proceeding')::int AS enq_consult,
+      (SELECT count(*) FROM documents.forms WHERE therapist_id=$1 AND status='sent')::int AS forms_waiting`, [me.id]);
+  res.send(V.therapistHome({ who: me.name, today: today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })),
+    clients: { active: d.active, wants_change: d.wants_change }, enquiries: { new: d.enq_new, consultations: d.enq_consult }, forms_waiting: d.forms_waiting }));
 });
 
 router.get('/therapist/clients', th, async (req, res) => {

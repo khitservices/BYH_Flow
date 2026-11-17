@@ -6,6 +6,7 @@ const mail = require('../lib/mail');
 const { audit } = require('../lib/audit');
 const { limited } = require('../lib/ratelimit');
 const V = require('../views/pages');
+const T = require('../lib/time');
 const brand = require('../lib/brand');
 
 const router = express.Router();
@@ -144,14 +145,9 @@ const pm = A.requireRole('practice_manager', '/staff', V.forbidden);
 
 router.get('/practice', pm, async (req, res) => {
   const m = await mail.getSettings();
-  res.send(V.shell(req.session.staff.name, 'Practice manager', 'Set up the practice and manage the team here. Client records are not available in this account.', [
-    { href: '/practice/settings/practice', label: 'Practice details (name and colour)' },
-    { href: '/practice/settings/email', label: m.configured ? 'Email settings' : 'Set up email (needed before anyone can sign in by email)' },
-    { href: '/practice/forms', label: 'Forms (agreements and consent forms)' },
-    { href: '/practice/programmes', label: 'Programmes and prices (for example a single fixed-price session)' },
-    { href: '/practice/stats', label: 'Practice statistics (numbers only)' },
-    { href: '/practice/team', label: 'Team (add or remove therapists and managers)' },
-  ]));
+  const d = await one(`SELECT (SELECT count(*) FROM core.programmes WHERE active)::int AS programmes, (SELECT count(*) FROM core.form_templates WHERE active)::int AS forms,
+    (SELECT count(*) FROM core.staff WHERE role='therapist' AND status <> 'removed' AND close_requested_at IS NOT NULL)::int AS close_requests`);
+  res.send(V.practiceHome({ who: req.session.staff.name, stats: await require('../lib/stats').practiceStats(), mailOk: !!m.configured, programmes: d.programmes, forms: d.forms, closeRequests: d.close_requests }));
 });
 
 router.get('/practice/stats', pm, async (_req, res) => res.send(V.practiceStats(await require('../lib/stats').practiceStats())));
@@ -294,8 +290,13 @@ router.post('/practice/settings/email', pm, async (req, res) => {
 });
 
 router.get('/journal', A.requireRole('client', '/', V.forbidden), async (req, res) => {
-  const forms = await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND status <> 'void' ORDER BY id`, [req.session.client.id]);
-  res.send(V.clientHome(req.session.client.name, forms));
+  const id = req.session.client.id;
+  const c = await one(`SELECT c.*, s.name AS therapist, s.relax_url FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
+  const forms = await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND status <> 'void' ORDER BY id`, [id]);
+  const next = await one(`SELECT min(starts_at) AS at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now()`, [id]);
+  const held = (await one(`SELECT count(*)::int n FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at <= now()`, [id])).n;
+  res.send(V.clientHome({ who: c.name, therapist: c.therapist, relax: c.relax_url, forms, next: next.at ? T.when(next.at) : null,
+    pos: { on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions } }));
 });
 
 module.exports = router;

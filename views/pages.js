@@ -3,21 +3,34 @@ const { BRAND } = require('../lib/brand');
 const { esc } = require('../lib/mail');
 const T = require('../lib/time');
 
-function page(title, body) {
+// w: undefined = narrow (sign-in, public pages), 'read' = forms and settings, 'wide' = working pages that fill a desktop screen.
+// nav: { who, home } adds a top bar with the person's name, a Home link and Sign out.
+function page(title, body, w, nav) {
+  const bar = nav ? `<div class="bar"><span><strong>${esc(BRAND.practiceName)}</strong></span><span>${esc(nav.who)} · ${nav.home ? `<a href="${esc(nav.home)}">Home</a> · ` : ''}<a href="/logout">Sign out</a></span></div>` : '';
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
 <style>
 body{font-family:system-ui,Arial,sans-serif;background:#f6f8f8;color:#222;margin:0}
 main{max-width:440px;margin:8vh auto;padding:28px;background:#fff;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.08)}
+main.read{max-width:700px;margin:3vh auto}main.wide{max-width:1040px;margin:3vh auto}main.nav{margin-top:0}
+.bar{max-width:1040px;margin:0 auto;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;font-size:14px}
 h1{font-size:20px;color:${BRAND.colorPrimary};margin:0 0 16px}
 label{display:block;font-size:14px;font-weight:600;margin-top:12px}label.check{font-weight:400;display:flex;gap:8px;align-items:center}label.check input{width:auto;margin:0}
 button.alt{background:#fff;color:${BRAND.colorPrimary};border:1px solid ${BRAND.colorPrimary}}
-input,button{font-size:16px;padding:11px;width:100%;box-sizing:border-box;margin:6px 0;border-radius:6px}
-input{border:1px solid #bbb} button{border:0;background:${BRAND.colorPrimary};color:#fff;cursor:pointer}
+input,button,select,textarea{font-size:16px;padding:11px;width:100%;box-sizing:border-box;margin:6px 0;border-radius:6px}
+input,textarea{border:1px solid #bbb} button{border:0;background:${BRAND.colorPrimary};color:#fff;cursor:pointer}
+main.read form,main.wide form{max-width:560px}
 a{color:${BRAND.colorPrimary}} .muted{color:#666;font-size:14px} form.inline{display:inline}
-</style></head><body><main><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:16px 0}
+.card{border:1px solid #e3e8e8;border-radius:10px;padding:16px;background:#fff;display:flex;flex-direction:column;gap:6px}
+.card h2{font-size:15px;margin:0;color:#444}.card p{margin:2px 0}.card .links{margin-top:auto;padding-top:8px}.card .links a{display:inline-block;margin-right:14px}
+.stat{font-size:32px;font-weight:700;color:${BRAND.colorPrimary};line-height:1.1}
+.cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));column-gap:32px}
+@media (max-width:700px){main,main.read,main.wide{margin:0;border-radius:0;box-shadow:none;padding:18px;min-height:100vh}.cols{display:block}}
+</style></head><body>${bar}<main class="${w || ''}${nav ? ' nav' : ''}"><h1>${esc(BRAND.practiceName)}</h1>${body}</main></body></html>`;
 }
 
+const wide = (t, b) => page(t, b, 'wide'), read = (t, b) => page(t, b, 'read');
 const clientLogin = () => page('Client sign-in', `<p><strong>Client sign-in</strong></p><p>Enter your email and we'll send you a sign-in link.</p>
 <form method="post" action="/request-link"><input name="email" type="email" autocomplete="email" required placeholder="Your email">
 <button>Email me a link</button></form><p class="muted">Therapist or practice manager? <a href="/staff">Use team sign-in</a></p>`);
@@ -69,7 +82,7 @@ ${r.id === myId ? '' : `<form method="post" action="/practice/team/${r.id}"><inp
 ${r.clients > 0 ? `<label for="t${r.id}">Move their ${r.clients} client${r.clients === 1 ? '' : 's'} to</label><select id="t${r.id}" name="reassign_to" required style="font-size:16px;padding:11px;width:100%;margin:6px 0"><option value="">Choose a therapist</option>${others(r.id).map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select>` : ''}
 <button style="background:#b00020">Remove ${esc(r.name)}</button></form>`}
 </details></section>`;
-  return page('Team', `<p><strong>Team</strong></p>
+  return wide('Team', `<p><strong>Team</strong></p>
 <p class="muted">Each account is either a therapist or a practice manager. One person can have both under the same email address; they are separate accounts.</p>
 ${msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : ''}
 ${rows.map(card).join('')}
@@ -98,14 +111,14 @@ const day = d => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', 
 function clients(rows) {
   const row = r => `<p style="border-top:1px solid #ddd;padding:12px 0;margin:0"><a href="/therapist/client/${r.id}"><strong>${esc(r.name)}</strong></a><br>
 <span class="muted">${STATUS[r.status]}${r.status === 'closed' ? '' : ` · session ${r.pos.on} of ${r.pos.of}`}${r.under16 ? ' · under 16' : ''}${r.next ? `<br>Next: ${esc(r.next)}` : ''}${r.wants_change ? '<br><strong style="color:#8a4a00">Has asked to change a session</strong>' : ''}</span></p>`;
-  return page('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
-${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}
+  return wide('Clients', `<p><strong>Your clients</strong></p><p class="muted">Only you can see these.</p>
+<div class="cols">${rows.length ? rows.map(row).join('') : '<p class="muted">No clients yet.</p>'}</div>
 <form method="get" action="/therapist/clients/add" style="border-top:1px solid #ddd;padding-top:12px"><button>Add a client</button></form>
 <p><a href="/therapist">Back</a></p>`);
 }
 
 function clientAdd(f, msg) {
-  return page('Add a client', `<p><strong>Add a client</strong></p>
+  return read('Add a client', `<p><strong>Add a client</strong></p>
 <p class="muted">They are emailed an invitation to their own client area.</p>${note(msg, false)}
 <form method="post" action="/therapist/clients/add">${f.from_enquiry ? `<input type="hidden" name="from_enquiry" value="${esc(f.from_enquiry)}">` : ''}
 <label for="name">Name</label><input id="name" name="name" required value="${esc(f.name)}">
@@ -132,7 +145,7 @@ function clientRecord(c, msg, ok) {
   const post = (action, inner) => `<form method="post" action="/therapist/client/${c.id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
   const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
   const closed = c.status === 'closed';
-  return page(c.name, `<p><strong>${esc(c.name)}</strong>${c.under16 ? ' <span class="muted">(under 16)</span>' : ''}<br>
+  return wide(c.name, `<p><strong>${esc(c.name)}</strong>${c.under16 ? ' <span class="muted">(under 16)</span>' : ''}<br>
 <span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}` : ` · session ${c.pos.on} of ${c.pos.of}`}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
 ${note(msg, ok)}
 ${sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
@@ -156,14 +169,57 @@ ${sec('Record', closed
 }
 
 // ---- therapist account: home, booking and schedule ----
-function therapistHome(who, clientCount, today, newEnquiries = 0) {
-  return page('Therapist', `<p>Signed in as <strong>${esc(who)}</strong> (Therapist).</p>
-<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Today</strong></p>
-${today.length ? today.map(a => `<p style="margin:4px 0">${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted" style="margin:0">No sessions today.</p>'}</section>
-<p><a href="/therapist/enquiries">Enquiries${newEnquiries ? ` (${newEnquiries} new)` : ''}</a></p><p><a href="/therapist/clients">Clients (${clientCount})</a></p><p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist/schedule">Schedule</a></p><p><a href="/therapist/account">Account</a></p>
-<p><a href="/logout">Sign out</a></p>`);
+function therapistHome(d) {
+  const n = (v, one, many) => `${v} ${v === 1 ? one : many}`;
+  return page('Therapist', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Here is where things stand.</p>
+<div class="grid">
+<section class="card"><h2>Today</h2>${d.today.length ? d.today.map(a => `<p>${esc(a.time)} &nbsp; ${esc(a.name)}</p>`).join('') : '<p class="muted">No sessions today.</p>'}
+<div class="links"><a href="/therapist/schedule">Schedule</a><a href="/therapist/book">Book a session</a></div></section>
+<section class="card"><h2>Enquiries</h2><span class="stat">${d.enquiries.new}</span><p class="muted">new · ${n(d.enquiries.consultations, 'consultation', 'consultations')} coming up</p>
+<div class="links"><a href="/therapist/enquiries">Open enquiries</a><a href="/therapist/enquiries/new">Add an enquiry</a></div></section>
+<section class="card"><h2>Clients</h2><span class="stat">${d.clients.active}</span><p class="muted">active${d.clients.wants_change ? ` · <strong style="color:#8a4a00">${n(d.clients.wants_change, 'client has', 'clients have')} asked to change a session</strong>` : ''}</p>
+<div class="links"><a href="/therapist/clients">Your clients</a><a href="/therapist/clients/add">Add a client</a></div></section>
+<section class="card"><h2>Forms</h2><span class="stat">${d.forms_waiting}</span><p class="muted">waiting to be signed</p>
+<div class="links"><a href="/therapist/enquiries">Enquiries</a><a href="/therapist/clients">Clients</a></div></section>
+<section class="card"><h2>Your account</h2><p class="muted">Your details for forms, calendar link, relaxation link and handing over clients.</p>
+<div class="links"><a href="/therapist/account">Account</a></div></section>
+</div>`, 'wide', { who: d.who, home: '/therapist' });
 }
 
+// The practice manager sees counts and set-up only: never a client's name or details.
+function practiceHome(d) {
+  const t = d.stats.totals, a = d.stats.accounts, ch = d.stats.enquiries;
+  const total = v => Object.values(v).reduce((x, y) => x + y, 0);
+  return page('Practice', `<p style="margin:0 0 4px"><strong style="font-size:22px">Practice overview</strong></p><p class="muted" style="margin:0">Numbers only. Client records are not available in this account.</p>
+${d.mailOk ? '' : '<p style="color:#8a4a00"><strong>Email is not set up yet.</strong> Nobody can sign in by email until it is. <a href="/practice/settings/email">Set up email</a></p>'}
+${d.closeRequests ? `<p style="color:#8a4a00"><strong>${d.closeRequests} therapist${d.closeRequests === 1 ? ' has' : 's have'} asked to close their account.</strong> <a href="/practice/team">Open Team</a></p>` : ''}
+<div class="grid">
+<section class="card"><h2>Team</h2><span class="stat">${a.therapists}</span><p class="muted">active therapist${a.therapists === 1 ? '' : 's'}${a.suspended ? ` · ${a.suspended} suspended` : ''} · ${a.managers} manager${a.managers === 1 ? '' : 's'}</p>
+<div class="links"><a href="/practice/team">Manage team</a></div></section>
+<section class="card"><h2>Clients</h2><span class="stat">${t.active_clients}</span><p class="muted">active · ${t.upcoming} upcoming session${t.upcoming === 1 ? '' : 's'} · ${t.delivered_30} delivered in 30 days</p>
+<div class="links"><a href="/practice/stats">Practice statistics</a></div></section>
+<section class="card"><h2>Enquiries</h2><span class="stat">${total(ch.stage)}</span><p class="muted">in total · ${ch.stage.new || 0} new · ${ch.stage.converted || 0} became clients</p>
+<div class="links"><a href="/practice/stats">By route and stage</a></div></section>
+<section class="card"><h2>Programmes</h2><span class="stat">${d.programmes}</span><p class="muted">offered, with prices, including single fixed-price sessions</p>
+<div class="links"><a href="/practice/programmes">Programmes and prices</a></div></section>
+<section class="card"><h2>Forms</h2><span class="stat">${d.forms}</span><p class="muted">form templates offered (agreements and consent forms)</p>
+<div class="links"><a href="/practice/forms">Forms</a></div></section>
+<section class="card"><h2>Set-up</h2><p class="muted">Practice name and colour, and the mailbox that sends sign-in codes, appointments and forms.</p>
+<div class="links"><a href="/practice/settings/practice">Practice details</a><a href="/practice/settings/email">Email settings</a></div></section>
+</div>`, 'wide', { who: d.who, home: '/practice' });
+}
+
+// Client landing. The journal, history and the weekly score arrive in the next step; sessions and forms are here now.
+function clientHome(d) {
+  return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
+<div class="grid">
+<section class="card"><h2>Your next session</h2>${d.next ? `<p><strong>${esc(d.next)}</strong></p>` : '<p class="muted">Nothing booked yet.</p>'}
+<p class="muted">Session ${d.pos.on} of ${d.pos.of}</p></section>
+<section class="card"><h2>Forms</h2>${d.forms.filter(f => f.status !== 'void').length ? formsBlock(d.forms, 'client') : '<p class="muted">You have no forms.</p>'}</section>
+<section class="card"><h2>Your journal</h2><p class="muted">Coming soon: write a little each week and tell us how you are feeling, from 1 to 10.</p></section>
+${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
+</div>`, 'wide', { who: d.who, home: '/journal' });
+}
 const whenFields = (id, at) => `<label for="d${id}">Date</label><input id="d${id}" name="date" type="date" required value="${at ? T.inputDate(at) : ''}">
 <label for="t${id}">Time</label><input id="t${id}" name="time" type="time" required value="${at ? T.timeShort(at) : '14:00'}">`;
 const sessionActions = (a, ret) => `<details><summary>Change</summary>
@@ -179,7 +235,7 @@ function clientSessions(c, appts, msg, ok) {
   const line = a => `<div style="border-top:1px solid #eee;padding:10px 0"><p style="margin:0">${esc(T.when(a.starts_at))}${a.status === 'cancelled' ? ' <span class="muted">(cancelled)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'client')}</div>`;
   const up = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) > now), past = appts.filter(a => a.status === 'booked' && new Date(a.starts_at) <= now).reverse(), gone = appts.filter(a => a.status === 'cancelled').reverse();
   const block = (title, list, empty) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${list.length ? list.map(line).join('') : `<p class="muted" style="margin:0">${empty}</p>`}</section>`;
-  return page(`Sessions: ${c.name}`, `<p><strong>Sessions: ${esc(c.name)}</strong></p>${note(msg, ok)}
+  return wide(`Sessions: ${c.name}`, `<p><strong>Sessions: ${esc(c.name)}</strong></p>${note(msg, ok)}
 ${block('Coming up', up, 'Nothing booked.')}
 ${c.status === 'active' ? `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>Book a session</strong></p>
 <form method="post" action="/therapist/client/${c.id}/sessions">${whenFields('new')}<button>Book</button></form>
@@ -189,7 +245,7 @@ ${block('Past', past, 'None yet.')}${gone.length ? block('Cancelled', gone, '') 
 }
 
 function book(active, msg, ok) {
-  return page('Book a session', `<p><strong>Book a session</strong></p>${note(msg, ok)}
+  return read('Book a session', `<p><strong>Book a session</strong></p>${note(msg, ok)}
 ${active.length ? `<form method="post" action="/therapist/book"><label for="cl">Client</label><select id="cl" name="client_id" required ${sel}><option value="">Choose a client</option>${opts(active.map(c => [c.id, c.name]))}</select>
 ${whenFields('b')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}
 <p><a href="/therapist">Back</a></p>`);
@@ -199,7 +255,7 @@ function schedule(rows, feed, msg, ok) {
   let lastDay = '';
   const line = a => { const d = T.dateLong(a.starts_at); const head = d !== lastDay ? `<p style="margin:14px 0 4px"><strong>${esc(d)}</strong></p>` : ''; lastDay = d;
     return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule')}</div>`; };
-  return page('Schedule', `<p><strong>Schedule</strong> <span class="muted">next 60 days</span></p>${note(msg, ok)}
+  return wide('Schedule', `<p><strong>Schedule</strong> <span class="muted">next 60 days</span></p>${note(msg, ok)}
 ${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}
 <section style="border-top:1px solid #ddd;padding:12px 0;margin-top:14px"><p style="margin:0 0 6px"><strong>See this in your own calendar</strong></p>
 <p class="muted" style="margin:0">A private link you add once to Outlook, Apple or Google Calendar as a subscribed calendar. It shows session times with the client's first name and initial only. Calendar apps refresh it every few hours.</p>
@@ -208,7 +264,7 @@ ${feed.hasFeed ? '<form method="post" action="/therapist/schedule/feed"><input t
 <p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist">Back</a></p>`);
 }
 
-const feedLink = url => page('Your calendar link', `<p><strong>Your calendar link</strong></p>
+const feedLink = url => read('Your calendar link', `<p><strong>Your calendar link</strong></p>
 <p>Copy this now. It is shown only once; if you lose it, create a new one from the Schedule page.</p>
 <label for="fl">Link</label><input id="fl" readonly value="${esc(url)}" onfocus="this.select()">
 <p class="muted">In your calendar app choose "add calendar from the internet" or "subscribe", and paste it. Treat it like a password: anyone with the link can see your session times.</p>
@@ -217,7 +273,7 @@ const feedLink = url => page('Your calendar link', `<p><strong>Your calendar lin
 function therapistAccount(me, mine, colleagues, msg, ok) {
   const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
   const post = (action, inner) => `<form method="post" action="/therapist/account"><input type="hidden" name="action" value="${action}">${inner}</form>`;
-  return page('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
+  return wide('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
 ${sec('My details (used on forms)', `<p class="muted" style="margin:0">Filled into the forms you send, such as the agreement. Leave blank anything you do not want shown.</p>
 ${post('details', `<label for="dq">Qualifications</label><input id="dq" name="qualifications" maxlength="200" value="${esc(me.qualifications)}">
 <label for="da">Address</label><input id="da" name="address" maxlength="200" value="${esc(me.address)}">
@@ -243,7 +299,7 @@ ${sec('Close my account', me.close_requested_at
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
 function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
-  return page('Email settings', `<p><strong>Email settings</strong></p>
+  return read('Email settings', `<p><strong>Email settings</strong></p>
 <p class="muted">Everything the app sends (sign-in codes and links, and later reminders and consent requests) goes out from this mailbox. Use the outgoing (SMTP) details from your email provider.</p>
 ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
 ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on the server, so a password cannot be saved yet.</p>'}
@@ -261,7 +317,7 @@ ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on t
 }
 
 function practiceSettings(s, msg, ok) {
-  return page('Practice details', `<p><strong>Practice details</strong></p>
+  return read('Practice details', `<p><strong>Practice details</strong></p>
 <p class="muted">The name and colour appear on every page and in every email the app sends.</p>
 ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
 <form method="post" action="/practice/settings/practice">
@@ -275,7 +331,7 @@ ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)
 function practiceStats(st) {
   const t = st.totals, a = st.accounts;
   const row = (n, r, b) => `<tr${b ? ' style="font-weight:600"' : ''}><td>${esc(n)}</td><td>${r.active_clients}</td><td>${r.upcoming}</td><td>${r.delivered_30}</td><td>${r.cancelled_30}</td><td>${r.change_requests}</td></tr>`;
-  return page('Practice statistics', `<p><strong>Practice statistics</strong></p>
+  return wide('Practice statistics', `<p><strong>Practice statistics</strong></p>
 <p class="muted">Numbers only. Client names and details are never shown in this account.</p>
 <p>${a.therapists} active therapist${a.therapists === 1 ? '' : 's'}${a.suspended ? `, ${a.suspended} suspended` : ''} · ${t.active_clients} active client${t.active_clients === 1 ? '' : 's'} · ${t.readonly_clients} read-only · ${t.closed_clients} closed</p>
 <div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:14px;width:100%" aria-label="Counts by therapist">
@@ -316,18 +372,18 @@ function therapistEnquiries(rows, links, msg, ok) {
   const card = e => `<section style="border-top:1px solid #ddd;padding:12px 0" aria-label="${esc(e.name)}">
 <p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ' <span class="muted">(child, under 16)</span>' : ''}<br>
 <span class="muted">${esc(STAGE[e.stage])} · ${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.ic_text ? `<br>Consultation: ${esc(e.ic_text)}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
+${e.stage === 'converted' ? (e.converted_client_id ? `<p style="margin:6px 0"><a href="/therapist/client/${e.converted_client_id}">Open their client record</a></p>` : '')
+  : e.stage === 'not_proceeding' ? '' : `<form method="get" action="/therapist/clients/add"><input type="hidden" name="from" value="${e.id}"><button style="max-width:240px">Add as a client</button></form>`}
 ${e.stage === 'converted' ? '' : `<details><summary>Manage</summary>
 ${post(e.id, 'consult', `<label for="d${e.id}">Consultation date</label><input id="d${e.id}" name="date" type="date" required value="${e.ic_at ? T.inputDate(e.ic_at) : ''}"><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="${e.ic_at ? T.timeShort(e.ic_at) : '10:00'}"><button class="alt">${e.ic_at ? 'Move consultation' : 'Set consultation'}${e.email ? ' and email them' : ''}</button>`)}
 ${e.ic_at ? post(e.id, 'clear_consult', '<button class="alt">Remove consultation</button>') : ''}
 ${formsBlock(e.forms || [], 'therapist')}
 ${(e.templates || []).length ? `<details open><summary>${e.stage === 'attended' || (e.forms || []).length ? 'Send the form again' : 'Mark as attended and send forms'}</summary>${post(e.id, 'attended', `${templateSelect(e.id, e.templates)}${feeInput(e.id, e.fee_pence)}${formatSelect(e.id)}<button>${(e.forms || []).length ? 'Send again' : 'Attended: send for signing'}</button>`)}<p class="muted">${e.for_child ? 'It goes to the parent or guardian.' : 'It goes to the person who enquired.'} They read and sign it in the app, and the signed copy is kept with this enquiry and then their client record.</p></details>` : '<p class="muted">No forms are set up for this kind of enquiry yet.</p>'}
 ${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
-${e.stage !== 'proceeding' ? post(e.id, 'proceeding', '<button class="alt">Mark as proceeding</button>') : ''}
 ${e.stage !== 'not_proceeding' ? post(e.id, 'not_proceeding', '<button class="alt">Not proceeding</button>') : post(e.id, 'new', '<button class="alt">Reopen</button>')}
-<form method="get" action="/therapist/clients/add"><input type="hidden" name="from" value="${e.id}"><button>Turn into a client</button></form>
 ${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details>`}</section>`;
-  return page('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">Only you can see these.</p>${note(msg, ok)}
-${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p>'}
+  return wide('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">Only you can see these.</p>${note(msg, ok)}
+<div class="cols">${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p>'}</div>
 <form method="get" action="/therapist/enquiries/new" style="border-top:1px solid #ddd;padding-top:12px"><button>Add an enquiry (phone or in person)</button></form>
 <details style="border-top:1px solid #ddd;padding-top:12px;margin-top:12px"><summary>Enquiry links</summary>
 <p class="muted">Your own page (use this for your private page, Google ads and Facebook by adding the route shown):</p>
@@ -340,7 +396,7 @@ ${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p
 
 function enquiryManual(f = {}, msg) {
   const child = f.type === 'child';
-  return page('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone or in person.</p>${note(msg, false)}
+  return read('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone or in person.</p>${note(msg, false)}
 <form method="post" action="/therapist/enquiries/add">
 <fieldset style="border:1px solid #ddd;border-radius:6px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Who is it for?</legend>
 <label class="check"><input type="radio" name="type" value="adult" ${child ? '' : 'checked'}> Adult</label><label class="check"><input type="radio" name="type" value="child" ${child ? 'checked' : ''}> Child under 16</label>
@@ -371,7 +427,7 @@ function programmes(rows, msg, ok) {
 <label for="p${p.id}">Price in pounds (optional)</label><input id="p${p.id}" name="price" inputmode="decimal" value="${p.price_pence == null ? '' : esc((p.price_pence / 100).toFixed(2))}">
 <button>Save</button></form>
 <form method="post" action="/practice/programmes/${p.id}"><input type="hidden" name="action" value="${p.active ? 'retire' : 'restore'}"><button class="alt">${p.active ? 'Retire (stop offering it)' : 'Offer again'}</button></form></details></section>`;
-  return page('Programmes', `<p><strong>Programmes and prices</strong></p><p class="muted">What therapists choose from when they add a client. A single fixed-price session, such as smoking cessation, is a programme of 1 session. Prices are recorded for the therapist to see; no payments are taken here.</p>${note(msg, ok)}
+  return wide('Programmes', `<p><strong>Programmes and prices</strong></p><p class="muted">What therapists choose from when they add a client. A single fixed-price session, such as smoking cessation, is a programme of 1 session. Prices are recorded for the therapist to see; no payments are taken here.</p>${note(msg, ok)}
 ${rows.map(card).join('')}
 <form method="post" action="/practice/programmes" style="border-top:1px solid #ddd;padding-top:12px"><p style="margin:0"><strong>Add a programme</strong></p>
 <label for="an">Name</label><input id="an" name="name" required maxlength="80" placeholder="Smoking cessation"><label for="as">Sessions</label><input id="as" name="sessions" inputmode="numeric" required value="1">
@@ -385,7 +441,7 @@ function signPage(r, action, error, f = {}, back, preview) {
   const choice = c => c.type === 'yesno'
     ? `<fieldset style="border:0;padding:0;margin:12px 0"><legend>${esc(c.label)}</legend><label class="check"><input type="radio" name="choice_${c.key}" value="yes" ${f['choice_' + c.key] === 'yes' ? 'checked' : ''}> Yes</label><label class="check"><input type="radio" name="choice_${c.key}" value="no" ${f['choice_' + c.key] === 'no' ? 'checked' : ''}> No</label></fieldset>`
     : `<label class="check"><input type="checkbox" name="choice_${c.key}" ${f['choice_' + c.key] ? 'checked' : ''}> ${esc(c.label)}</label>`;
-  return page(r.title, `<p><strong style="font-size:20px">${esc(r.title)}</strong></p>${preview ? '<p class="muted">Preview only. Nothing can be signed here.</p>' : ''}
+  return read(r.title, `<p><strong style="font-size:20px">${esc(r.title)}</strong></p>${preview ? '<p class="muted">Preview only. Nothing can be signed here.</p>' : ''}
 ${r.intro.map((p, i) => i === 0 ? `<p><strong>${esc(p)}</strong></p>` : `<p>${esc(p)}</p>`).join('')}
 ${r.sections.map(x => `<h3 style="margin:18px 0 4px">${esc(x.heading)}</h3>${x.paragraphs.map(p => `<p style="margin:6px 0">${esc(p)}</p>`).join('')}`).join('')}
 <section style="border-top:2px solid #ddd;margin-top:20px;padding-top:12px"><h3 style="margin:0 0 6px">Sign</h3>${r.signing_intro ? `<p>${esc(r.signing_intro)}</p>` : ''}${note(error, false)}
@@ -415,7 +471,7 @@ const formatSelect = id => `<label for="fmt${id}">Sessions will be</label><selec
 const templateSelect = (id, list) => `<label for="tp${id}">Form</label><select id="tp${id}" name="template" ${sel}>${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>`;
 
 function formTemplates(rows, msg, ok) {
-  return page('Forms', `<p><strong>Forms</strong></p><p class="muted">The forms therapists can send for signing. The Inspired To Change forms are included; add your own for other practices or a standalone practitioner. Wording you change here applies to forms sent from then on; forms already sent keep their wording.</p>${note(msg, ok)}
+  return wide('Forms', `<p><strong>Forms</strong></p><p class="muted">The forms therapists can send for signing. The Inspired To Change forms are included; add your own for other practices or a standalone practitioner. Wording you change here applies to forms sent from then on; forms already sent keep their wording.</p>${note(msg, ok)}
 ${rows.map(t => `<section style="border-top:1px solid #ddd;padding:10px 0"><strong>${esc(t.name)}</strong>${t.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${t.audience === 'child' ? 'Signed by a parent or guardian' : 'Signed by the client'}</span><br>
 <a href="/practice/forms/${t.id}">Edit</a> · <a href="/practice/forms/${t.id}/preview">Preview</a>
 <form method="post" action="/practice/forms/${t.id}" style="display:inline"><input type="hidden" name="action" value="${t.active ? 'retire' : 'restore'}"><button class="alt">${t.active ? 'Retire' : 'Offer again'}</button></form></section>`).join('')}
@@ -423,7 +479,7 @@ ${rows.map(t => `<section style="border-top:1px solid #ddd;padding:10px 0"><stro
 }
 function formTemplateEdit(t, F, error) {
   const f = t.form, sf = f.signer_fields || [];
-  return page('Edit form', `<p><strong>${t.id ? 'Edit form' : 'Add a form'}</strong></p>${note(error, false)}
+  return read('Edit form', `<p><strong>${t.id ? 'Edit form' : 'Add a form'}</strong></p>${note(error, false)}
 <form method="post" action="/practice/forms${t.id ? '/' + t.id : ''}">
 <label for="fn">Name (what therapists see)</label><input id="fn" name="name" required maxlength="100" value="${esc(t.name)}">
 <label for="fa">Who signs it</label><select id="fa" name="audience" ${sel}><option value="adult"${t.audience === 'adult' ? ' selected' : ''}>The client</option><option value="child"${t.audience === 'child' ? ' selected' : ''}>A parent or guardian, for a child</option></select>
@@ -439,9 +495,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-// Client area landing. The journal arrives in the next step; forms are here now.
-function clientHome(name, forms) {
-  return page('Client', `<p>Signed in as <strong>${esc(name)}</strong> (Client).</p><p class="muted">Your journal will appear here.</p>
-${forms.length ? `<p><strong>Your forms</strong></p>${formsBlock(forms, 'client')}` : ''}<p><a href="/logout">Sign out</a></p>`);
-}
-module.exports = { clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

@@ -206,6 +206,25 @@ test('programmes: the manager keeps the list, a single fixed-price session works
   await q(`UPDATE clinical.clients SET programme_id=NULL WHERE email=$1`, [em('quit')]); await q(`DELETE FROM core.programmes WHERE id=$1`, [prog.id]);
 });
 
+test('landing pages: each user type gets their own overview, and the manager sees numbers only', { skip }, async () => {
+  const t = await addStaff('Thera Home', 'therapist'), p = await addStaff('Mgr Home', 'practice_manager');
+  const ct = await staffIn(t.email), cp = await staffIn(p.email);
+  await post(ct, '/therapist/enquiries/add', { type: 'adult', first_name: 'Hidden', last_name: 'Enquirer', email: em('hide') });
+  await add(ct, { name: 'Secret Clientname', email: em('secretc'), first_date: '2027-09-20', first_time: '10:00' });
+  const th = (await ct.get('/therapist')).text;
+  assert.match(th, /Hello Thera/); assert.match(th, /<h2>Enquiries<\/h2><span class="stat">1<\/span>/); assert.match(th, /<h2>Clients<\/h2><span class="stat">1<\/span>/); assert.match(th, /Sign out/);
+  assert.match(th, /class="grid"/); assert.match(th, /max-width:1040px/);                                  // the wide, card layout
+  const pm = (await cp.get('/practice')).text;
+  assert.match(pm, /Practice overview/); assert.match(pm, /<h2>Team<\/h2>/); assert.match(pm, /<h2>Programmes<\/h2>/); assert.match(pm, /Sign out/);
+  for (const hidden of ['Hidden Enquirer', 'Secret Clientname', 'Clientname', em('hide')]) assert.ok(!pm.includes(hidden), hidden);
+  const cl = await clientIn(em('secretc')); assert.ok(cl);
+  const home = (await cl.get('/journal')).text;
+  assert.match(home, /Hello Secret/); assert.match(home, /Your next session/); assert.match(home, /20 September 2027 at 10:00/); assert.match(home, /Session 1 of 8/); assert.match(home, /Your client area with Thera Home/);
+  assert.equal((await cl.get('/practice')).status, 403); assert.equal((await cl.get('/therapist')).status, 403);
+  // an enquiry that became a client links through to the record, and "proceeding" is no longer a dead-end button
+  const list = (await ct.get('/therapist/enquiries')).text; assert.match(list, /Add as a client/); assert.ok(!list.includes('Mark as proceeding'));
+});
+
 test('cleanse script refuses to run without the exact confirmation', async () => {
   const { spawnSync } = require('node:child_process');
   for (const args of [[], ['full'], ['full', '--confirm'], ['full', '--confirm', 'yes'], ['everything', '--confirm', 'ERASE']]) {

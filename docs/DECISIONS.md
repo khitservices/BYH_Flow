@@ -217,3 +217,11 @@
 - Differences from ITC's Word flow: the wellbeing-tracker Yes/No and newsletter choices are made by the signer, not pre-set by the therapist; the fee is entered at "attended" (defaulting to the therapist's usual fee); address and phone are asked of the signer rather than copied from the enquiry. Booking letter: the "[day, date] 52 Longleaf Drive" address line is not used because the venue is not recorded; the rest of ITC's wording is.
 - Not yet: reminders for unsigned forms (step 7), drawn signatures, a form builder beyond the text format, and automatic forms on other triggers.
 - IMPORTANT: FILE_ENCRYPTION_KEY now protects signed forms. If it is lost they cannot be read. It must be backed up away from the server, alongside the byh-flow_files volume.
+
+## Layout and landing pages (Kev)
+- This is not strictly a mobile app: working pages now use the screen. Three widths: narrow (sign-in, public enquiry form), "read" (forms and settings, 700px) and "wide" (working pages, up to 1040px, with cards and two-column lists). Under 700px everything stacks full-screen, so the phone still works.
+- Each user type has a landing page with a top bar (name, Home, Sign out):
+  - Therapist (`/therapist`): today's sessions, new enquiries and consultations coming up, active clients and any who have asked to change a session, forms waiting to be signed, account.
+  - Practice manager (`/practice`): numbers only. Team, clients and sessions, enquiries by stage, programmes, forms, set-up. Warns if email is not set up or a therapist has asked to close their account. Never a name or detail.
+  - Client (`/journal`): next session and where they are in the programme, forms to sign or open, relaxation link, and a placeholder for the journal and weekly score (step 6).
+- Enquiries: "Mark as proceeding" removed (it changed a label but created no client). An enquiry that is not yet a client has a clear "Add as a client" button; once converted the card links to the client record.

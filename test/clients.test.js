@@ -76,7 +76,7 @@ test('a therapist adds a client, who is invited and can sign in to the client ar
   assert.equal((await cl.get('/journal')).status, 200);
   assert.equal((await cl.get('/therapist/clients')).status, 403);
   assert.equal((await cl.get(`/therapist/client/${id}`)).status, 403);
-  assert.match((await c.get('/therapist')).text, /Clients \(1\)/);
+  assert.match((await c.get('/therapist')).text, /Clients<\/h2><span class="stat">1</);
   assert.match((await c.get('/therapist/clients')).text, /session 4 of 10/);
   // joining part-way through always leaves at least one session to come; a programme that is not on the list is refused
   await add(c, { name: 'Late', email: em('late'), sessions: '6', sessions_before_app: '99' });
