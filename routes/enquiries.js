@@ -50,6 +50,7 @@ router.post('/enquire', async (req, res) => {
     : await one(`SELECT id, name FROM core.staff WHERE id=$1 AND role='therapist' AND status='active'`, [Number(b.therapist) || 0]);
   const src = b.slug ? (PUBLIC_SRC.includes(b.src) ? b.src : 'therapist_page') : (PUBLIC_SRC.includes(b.src) ? b.src : 'website');
   const f = { name: text(b.name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40), for_child: b.for_child === 'on', child_name: text(b.child_name) };
+  // The form is filled in by whoever is enquiring. For a child that is the parent or guardian, so their details go in the guardian fields.
   const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, pick: therapist && therapist.id, f, error: msg }));
   if (!therapist) return again('Please choose who you would like to hear from.');
   if (!f.name) return again('Please enter your name.');
@@ -58,8 +59,9 @@ router.post('/enquire', async (req, res) => {
   if (f.for_child && !f.child_name) return again("Please enter the child's name.");
   // Limit counts accepted enquiries only, so a typo in the form never locks anyone out.
   if (limited(`enquire:${req.ip}`, 5, 3600000)) return res.status(429).send(V.enquireThanks('Too many enquiries from this connection. Please try again later.'));
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, child_name, email, phone) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [therapist.id, src, f.for_child, f.name, f.for_child ? f.child_name : null, f.email || null, f.phone || null]);
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null]
+                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null]);
   await audit(req, 'enquiry.received', { actorType: 'public', subjectType: 'enquiry', subjectId: e.id, detail: { channel: src } });
   try {
     const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [therapist.id]);
@@ -77,16 +79,17 @@ const MSG = {
 };
 
 async function tellConsultation(e, kind) { // kind: booked | moved | cancelled. Returns true if an email went.
-  if (!e.email || !e.ic_at) return false;
+  const to = e.for_child ? (e.guardian_email || e.email) : e.email, who = e.for_child ? (e.guardian_name || e.name) : e.name;
+  if (!to || !e.ic_at) return false;
   try {
     const m = await mail.getSettings(), cancel = kind === 'cancelled';
     const a = { id: e.id, uid_kind: 'consultation', starts_at: e.ic_at, duration_min: 60, ics_sequence: e.ic_sequence };
     const content = ics.calendar(cancel ? 'CANCEL' : 'REQUEST', [ics.vevent(a, {
       title: `${brand.BRAND.practiceName} initial consultation`, cancelled: cancel,
-      organizer: m.from_address ? { name: m.from_name || brand.BRAND.practiceName, email: m.from_address } : null, attendee: { name: e.name, email: e.email } })]);
+      organizer: m.from_address ? { name: m.from_name || brand.BRAND.practiceName, email: m.from_address } : null, attendee: { name: who, email: to } })]);
     const when = T.when(e.ic_at);
-    await mail.sendMail(e.email, cancel ? 'Consultation cancelled' : 'Your initial consultation',
-      cancel ? mail.consultationCancelledEmail(e.name, when) : mail.consultationEmail(e.name, when, kind === 'moved'), null, { icalEvent: { method: cancel ? 'CANCEL' : 'REQUEST', content } });
+    await mail.sendMail(to, cancel ? 'Consultation cancelled' : 'Your initial consultation',
+      cancel ? mail.consultationCancelledEmail(who, when) : mail.consultationEmail(who, when, kind === 'moved'), null, { icalEvent: { method: cancel ? 'CANCEL' : 'REQUEST', content } });
     return true;
   } catch (err) { console.error('[enquiries] consultation email failed:', err.message); return false; }
 }
@@ -98,15 +101,31 @@ router.get('/therapist/enquiries', th, async (req, res) => {
   res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows.map(e => ({ ...e, ic_text: e.ic_at ? T.when(e.ic_at) : null })), { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
 });
 
+// The full enquiry form the therapist fills in themselves (from the ITC contact app): adult or child,
+// first and last name, contact details, address, enquiry date, optional consultation, parent or guardian for a child.
+router.get('/therapist/enquiries/new', th, (_req, res) => res.send(V.enquiryManual({ enquiry_date: T.inputDate(new Date()) })));
+
 router.post('/therapist/enquiries/add', th, async (req, res) => {
-  const me = req.session.staff, b = req.body;
-  const name = text(b.name), email = String(b.email || '').trim().toLowerCase().slice(0, 254), phone = text(b.phone, 40), forChild = b.for_child === 'on';
-  if (!name) return res.redirect('/therapist/enquiries?msg=name');
-  if (!email && !phone) return res.redirect('/therapist/enquiries?msg=contact');
-  if (email && !EMAIL_RE.test(email)) return res.redirect('/therapist/enquiries?msg=email');
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, child_name, email, phone, notes) VALUES ($1,'phone',$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [me.id, forChild, name, forChild ? text(b.child_name) || null : null, email || null, phone || null, text(b.notes, 1000) || null]);
+  const me = req.session.staff, b = req.body, child = b.type === 'child';
+  const f = { type: child ? 'child' : 'adult', first: text(b.first_name), last: text(b.last_name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40),
+    address: text(b.address, 300), enquiry_date: text(b.enquiry_date, 10), ic_date: text(b.ic_date, 10), ic_time: text(b.ic_time, 5) || '10:00', notes: text(b.notes, 1000),
+    guardian_name: text(b.guardian_name), relationship: text(b.relationship), guardian_email: String(b.guardian_email || '').trim().toLowerCase().slice(0, 254), guardian_phone: text(b.guardian_phone, 40) };
+  const again = msg => res.status(400).send(V.enquiryManual(f, msg));
+  const name = `${f.first} ${f.last}`.trim();
+  if (!f.first || !f.last) return again('Enter a first and last name.');
+  if (f.email && !EMAIL_RE.test(f.email)) return again('That email address does not look right.');
+  if (f.guardian_email && !EMAIL_RE.test(f.guardian_email)) return again("The parent or guardian's email address does not look right.");
+  if (child && !f.guardian_name) return again("Enter the parent or guardian's name.");
+  if (!f.email && !f.phone && !(child && (f.guardian_email || f.guardian_phone))) return again('Add an email address or a phone number.');
+  const ed = f.enquiry_date && /^\d{4}-\d{2}-\d{2}$/.test(f.enquiry_date) && !isNaN(new Date(f.enquiry_date)) ? f.enquiry_date : T.inputDate(new Date());
+  let ic = null;
+  if (f.ic_date) { ic = T.fromLocal(f.ic_date, f.ic_time); if (!ic) return again('Enter a real consultation date and time.'); }
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, address, enquiry_date, notes, stage, ic_at, guardian_name, relationship, guardian_email, guardian_phone)
+    VALUES ($1,'phone',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    [me.id, child, name, f.email || null, f.phone || null, f.address || null, ed, f.notes || null, ic ? 'consultation' : 'new', ic,
+     child ? f.guardian_name : null, child ? f.relationship || null : null, child ? f.guardian_email || null : null, child ? f.guardian_phone || null : null]);
   await audit(req, 'enquiry.added', { actorType: 'staff', actorId: me.id, subjectType: 'enquiry', subjectId: e.id, detail: { channel: 'phone' } });
+  if (ic) return res.redirect(`/therapist/enquiries?msg=${ic > new Date() && await tellConsultation(e, 'booked') ? 'consult_set' : 'consult_set_nomail'}`);
   res.redirect('/therapist/enquiries?msg=added');
 });
 

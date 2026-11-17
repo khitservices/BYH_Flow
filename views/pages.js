@@ -277,7 +277,7 @@ function practiceStats(st) {
 }
 
 // ---------- enquiries ----------
-const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Phone' };
+const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Entered by therapist' };
 const STAGE = { new: 'New', consultation: 'Consultation set', proceeding: 'Proceeding', not_proceeding: 'Not proceeding', converted: 'Now a client' };
 
 function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) {
@@ -303,8 +303,8 @@ const enquireThanks = msg => page('Thank you', `<p>${esc(msg || 'Thank you. Your
 function therapistEnquiries(rows, links, msg, ok) {
   const post = (id, action, inner) => `<form method="post" action="/therapist/enquiries/${id}"><input type="hidden" name="action" value="${action}">${inner}</form>`;
   const card = e => `<section style="border-top:1px solid #ddd;padding:12px 0" aria-label="${esc(e.name)}">
-<p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ` <span class="muted">(for ${esc(e.child_name || 'a child')}, under 16)</span>` : ''}<br>
-<span class="muted">${esc(STAGE[e.stage])} · ${esc(CHANNEL[e.channel])} · ${day(e.created_at)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.ic_text ? `<br>Consultation: ${esc(e.ic_text)}` : ''}</span></p>
+<p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ' <span class="muted">(child, under 16)</span>' : ''}<br>
+<span class="muted">${esc(STAGE[e.stage])} · ${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.ic_text ? `<br>Consultation: ${esc(e.ic_text)}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
 ${e.stage === 'converted' ? '' : `<details><summary>Manage</summary>
 ${post(e.id, 'consult', `<label for="d${e.id}">Consultation date</label><input id="d${e.id}" name="date" type="date" required value="${e.ic_at ? T.inputDate(e.ic_at) : ''}"><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="${e.ic_at ? T.timeShort(e.ic_at) : '10:00'}"><button class="alt">${e.ic_at ? 'Move consultation' : 'Set consultation'}${e.email ? ' and email them' : ''}</button>`)}
 ${e.ic_at ? post(e.id, 'clear_consult', '<button class="alt">Remove consultation</button>') : ''}
@@ -315,12 +315,7 @@ ${e.stage !== 'not_proceeding' ? post(e.id, 'not_proceeding', '<button class="al
 ${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details>`}</section>`;
   return page('Enquiries', `<p><strong>Your enquiries</strong></p><p class="muted">Only you can see these.</p>${note(msg, ok)}
 ${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p>'}
-<details style="border-top:1px solid #ddd;padding-top:12px"><summary>Add an enquiry taken by phone</summary>
-<form method="post" action="/therapist/enquiries/add"><label for="an">Name</label><input id="an" name="name" required maxlength="100">
-<label for="ae">Email</label><input id="ae" name="email" type="email"><label for="ap">Phone</label><input id="ap" name="phone" type="tel">
-<label class="check"><input type="checkbox" name="for_child"> For a child under 16</label>
-<label for="ac">Child's name (if applicable)</label><input id="ac" name="child_name" maxlength="100">
-<label for="ano">Notes</label><input id="ano" name="notes" maxlength="1000"><button>Add enquiry</button></form></details>
+<form method="get" action="/therapist/enquiries/new" style="border-top:1px solid #ddd;padding-top:12px"><button>Add an enquiry (phone or in person)</button></form>
 <details style="border-top:1px solid #ddd;padding-top:12px;margin-top:12px"><summary>Enquiry links</summary>
 <p class="muted">Your own page (use this for your private page, Google ads and Facebook by adding the route shown):</p>
 <p style="word-break:break-all"><a href="${esc(links.mine)}">${esc(links.mine)}</a></p>
@@ -330,4 +325,29 @@ ${rows.length ? rows.map(card).join('') : '<p class="muted">No enquiries yet.</p
 <p><a href="/therapist">Back</a></p>`);
 }
 
-module.exports = { enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+function enquiryManual(f = {}, msg) {
+  const child = f.type === 'child';
+  return page('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone or in person.</p>${note(msg, false)}
+<form method="post" action="/therapist/enquiries/add">
+<fieldset style="border:1px solid #ddd;border-radius:6px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Who is it for?</legend>
+<label class="check"><input type="radio" name="type" value="adult" ${child ? '' : 'checked'}> Adult</label><label class="check"><input type="radio" name="type" value="child" ${child ? 'checked' : ''}> Child under 16</label>
+<p class="muted" style="margin:6px 0 0">If it is for a child, the name below is the child's and the parent or guardian goes in the box further down.</p></fieldset>
+<label for="fn">First name</label><input id="fn" name="first_name" required maxlength="100" value="${esc(f.first)}">
+<label for="ln">Last name</label><input id="ln" name="last_name" required maxlength="100" value="${esc(f.last)}">
+<label for="em">Email</label><input id="em" name="email" type="email" value="${esc(f.email)}">
+<label for="ph">Telephone</label><input id="ph" name="phone" type="tel" value="${esc(f.phone)}">
+<label for="ad">Address (optional)</label><input id="ad" name="address" maxlength="300" value="${esc(f.address)}">
+<label for="ed">Enquiry date</label><input id="ed" name="enquiry_date" type="date" value="${esc(f.enquiry_date)}">
+<label for="id">Initial consultation date (optional)</label><input id="id" name="ic_date" type="date" value="${esc(f.ic_date)}">
+<label for="it">Consultation time</label><input id="it" name="ic_time" type="time" value="${esc(f.ic_time || '10:00')}">
+<fieldset style="border:1px solid #ddd;border-radius:6px;margin:16px 0 8px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Parent or guardian (for a child)</legend>
+<label for="gn">Parent or guardian's name</label><input id="gn" name="guardian_name" maxlength="100" value="${esc(f.guardian_name)}">
+<label for="rl">Relationship to the child</label><input id="rl" name="relationship" maxlength="100" value="${esc(f.relationship)}">
+<label for="ge">Their email</label><input id="ge" name="guardian_email" type="email" value="${esc(f.guardian_email)}">
+<label for="gp">Their telephone</label><input id="gp" name="guardian_phone" type="tel" value="${esc(f.guardian_phone)}"></fieldset>
+<label for="nt">Notes (optional)</label><input id="nt" name="notes" maxlength="1000" value="${esc(f.notes)}">
+<p class="muted">An email or phone number is needed. If a consultation date is set and there is an email address, they are sent the date and a calendar file.</p>
+<button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
+}
+
+module.exports = { enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

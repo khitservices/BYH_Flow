@@ -62,7 +62,7 @@ router.get('/therapist/clients/add', th, async (req, res) => {
   const e = req.query.from ? await one(`SELECT * FROM clinical.enquiries WHERE id=$1 AND therapist_id=$2 AND stage <> 'converted'`, [Number(req.query.from) || 0, req.session.staff.id]) : null;
   if (!e) return res.send(V.clientAdd({}));
   res.send(V.clientAdd(e.for_child
-    ? { from_enquiry: e.id, name: e.child_name, under16: true, guardian_name: e.name, guardian_email: e.email, guardian_phone: e.phone }
+    ? { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone, under16: true, guardian_name: e.guardian_name, guardian_email: e.guardian_email, guardian_phone: e.guardian_phone }
     : { from_enquiry: e.id, name: e.name, email: e.email, phone: e.phone }));
 });
 
