@@ -36,4 +36,24 @@ router.post('/practice/locations', pm, async (req, res) => {
   }
   res.redirect('/practice/locations?msg=saved');
 });
+
+// "How did you hear about us" list — same manager-only settings pattern.
+const srcs = () => q(`SELECT r.*, (SELECT count(*)::int FROM clinical.enquiries e WHERE e.heard_from = r.name) AS n FROM core.referral_sources r ORDER BY r.active DESC, lower(r.name)`);
+router.get('/practice/sources', pm, async (req, res) => res.send(V.sourcesPage(await srcs(), req.query.msg === 'saved' ? 'Saved.' : null, true)));
+router.post('/practice/sources', pm, async (req, res) => {
+  const b = req.body, name = text(b.name, 100), who = { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'referral_source' };
+  const again = async msg => res.status(400).send(V.sourcesPage(await srcs(), msg, false));
+  const id = Number(b.id) || 0;
+  if (b.action === 'retire' || b.action === 'restore') { await q(`UPDATE core.referral_sources SET active=$2 WHERE id=$1`, [id, b.action === 'restore']); await audit(req, `source.${b.action}`, { ...who, subjectId: id }); return res.redirect('/practice/sources?msg=saved'); }
+  if (!name) return again('Enter a name.');
+  try {
+    if (id) {
+      const old = await one(`SELECT name FROM core.referral_sources WHERE id=$1`, [id]); if (!old) return again('That source no longer exists.');
+      await q(`UPDATE core.referral_sources SET name=$2 WHERE id=$1`, [id, name]);
+      await q(`UPDATE clinical.enquiries SET heard_from=$2 WHERE heard_from=$1`, [old.name, name]); await q(`UPDATE clinical.clients SET heard_from=$2 WHERE heard_from=$1`, [old.name, name]);
+    } else await q(`INSERT INTO core.referral_sources (name) VALUES ($1)`, [name]);
+  } catch (e) { if (e.code === '23505') return again('That source is already in the list.'); throw e; }
+  await audit(req, id ? 'source.renamed' : 'source.added', { ...who, subjectId: id || null });
+  res.redirect('/practice/sources?msg=saved');
+});
 module.exports = { router };

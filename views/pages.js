@@ -15,7 +15,7 @@ const MENUS = {
   practice_manager: [
     { label: 'Overview', href: '/practice', exact: true },
     { group: 'Practice' }, { label: 'Team', href: '/practice/team' }, { label: 'Statistics', href: '/practice/stats' },
-    { group: 'Set-up' }, { label: 'Programmes', href: '/practice/programmes' }, { label: 'Locations', href: '/practice/locations' }, { label: 'Forms', href: '/practice/forms' },
+    { group: 'Set-up' }, { label: 'Programmes', href: '/practice/programmes' }, { label: 'Locations', href: '/practice/locations' }, { label: 'Client sources', href: '/practice/sources' }, { label: 'Forms', href: '/practice/forms' },
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
@@ -462,6 +462,7 @@ ${stat(t.delivered_30, 'Delivered, last 30 days', `${t.cancelled_30} cancelled`)
 <section class="card"><h2>Programmes</h2><p class="muted">${b.repeat_clients || 0} client${(b.repeat_clients || 0) === 1 ? '' : 's'} on a second or later block · ${b.single_blocks || 0} standalone single session${(b.single_blocks || 0) === 1 ? '' : 's'}</p>
 ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Counts by programme"><thead><tr><th>Programme</th><th>Blocks</th><th>Sessions delivered</th></tr></thead><tbody>${b.byProgramme.map(r => `<tr><td>${esc(r.name)}</td><td>${r.blocks}</td><td>${r.delivered}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No programmes started yet.</p>'}</section>
 <section class="card"><h2>Enquiries by route</h2>${bars(en.channel, CHANNEL)}</section>
+<section class="card"><h2>How they heard about us</h2>${bars(en.heard || {}, {})}</section>
 <section class="card"><h2>Enquiries by stage</h2><p class="muted">${enqTotal} not archived · ${en.archived || 0} archived · ${t.archived_clients} client${t.archived_clients === 1 ? '' : 's'} did not proceed</p>${bars(en.stage, STAGE)}</section>
 </div>`);
 }
@@ -534,7 +535,7 @@ function archivePage(clients, enquiries, msg, ok) {
 <form method="post" action="/therapist/archive/enquiry/${e.id}"><button class="alt" style="max-width:260px">Restore as an enquiry</button></form></div>`).join('') : '<p class="muted">None.</p>'}</div>`);
 }
 
-function enquiryManual(f = {}, msg) {
+function enquiryManual(f = {}, msg, srcs = []) {
   const child = f.type === 'child';
   return read('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone or in person.</p>${note(msg, false)}
 <form method="post" action="/therapist/enquiries/add">
@@ -546,6 +547,8 @@ function enquiryManual(f = {}, msg) {
 <label for="em">Email</label><input id="em" name="email" type="email" value="${esc(f.email)}">
 <label for="ph">Telephone</label><input id="ph" name="phone" type="tel" value="${esc(f.phone)}">
 <label for="ad">Address (optional)</label><input id="ad" name="address" maxlength="300" value="${esc(f.address)}">
+<label for="hf">How did they hear about us?</label><select id="hf" name="heard" ${sel}><option value="">Not known</option>${srcs.map(s => `<option value="${s.id}"${String(f.heard) === String(s.id) ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}<option value="other"${f.heard === 'other' ? ' selected' : ''}>Something else (type it below)</option></select>
+<label for="ho">Something else, for example the name of an osteopath who referred them</label><input id="ho" name="heard_other" maxlength="100" value="${esc(f.heard_other)}">
 <label for="ed">Enquiry date</label><input id="ed" name="enquiry_date" type="date" value="${esc(f.enquiry_date)}">
 <label for="id">Initial consultation date (optional)</label><input id="id" name="ic_date" type="date" value="${esc(f.ic_date)}">
 <label for="it">Consultation time</label><input id="it" name="ic_time" type="time" value="${esc(f.ic_time || '10:00')}">
@@ -557,6 +560,14 @@ function enquiryManual(f = {}, msg) {
 <label for="nt">Notes (optional)</label><input id="nt" name="notes" maxlength="1000" value="${esc(f.notes)}">
 <p class="muted">An email or phone number is needed. If you set a consultation date they become a client ("Consultation booked") straight away and are emailed the date, a calendar file and an invitation to their client area. That needs an email address (the parent or guardian's, for a child).</p>
 <button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
+}
+
+function sourcesPage(rows, msg, ok) {
+  return wide('Where clients come from', `<p style="margin:0 0 4px"><strong style="font-size:22px">Where clients come from</strong></p><p class="muted" style="margin:0">The answers to "how did you hear about us". Therapists pick from this list when they enter an enquiry, and can type a new one, such as an osteopath who refers clients. It is added here for everyone. You see counts only, never names.</p>${note(msg, ok)}
+<div class="grid">${rows.map(r => `<section class="card"><h2>${esc(r.name)} <span class="pill ${r.active ? '' : 'off'}">${r.active ? 'In the list' : 'Not offered'}</span></h2>
+<p class="muted">${r.n} enquir${r.n === 1 ? 'y' : 'ies'} so far</p>
+<form method="post" action="/practice/sources"><input type="hidden" name="id" value="${r.id}"><label for="s${r.id}">Name</label><input id="s${r.id}" name="name" maxlength="100" value="${esc(r.name)}"><button class="alt" name="action" value="rename">Rename</button> <button class="alt" name="action" value="${r.active ? 'retire' : 'restore'}">${r.active ? 'Stop offering' : 'Offer again'}</button></form></section>`).join('')}
+<section class="card"><h2>Add a source</h2><form method="post" action="/practice/sources"><label for="sn">Name</label><input id="sn" name="name" required maxlength="100"><button>Add</button></form></section></div>`);
 }
 
 function locationsPage(rows, msg, ok) {
@@ -650,4 +661,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

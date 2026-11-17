@@ -443,3 +443,26 @@ test('therapist sends from their own address; locations are kept by the manager 
   assert.equal((await q(`SELECT sender_password_enc FROM core.staff WHERE id=$1`, [t.id]))[0].sender_password_enc, null);
   await q(`UPDATE core.mail_settings SET from_address=NULL`);
 });
+
+test('how did you hear about us: pick from the list or type a new source, it joins the list, follows the enquiry into the client, manager sees counts only', { skip }, async () => {
+  const t = await addStaff('Thera Src', 'therapist'), p = await addStaff('Mgr Src', 'practice_manager');
+  const ct = await staffIn(t.email, '10.78.1.1'), cp = await staffIn(p.email, '10.78.1.2');
+  assert.match((await ct.get('/therapist/enquiries/new')).text, /How did they hear about us/);
+  assert.equal((await ct.get('/practice/sources')).status, 403);
+  const man = f => ct.post('/therapist/enquiries/add', { type: 'adult', first_name: 'Src', last_name: f.l, email: f.e, ...f.x });
+  await man({ l: 'One', e: em('src1'), x: { heard: 'other', heard_other: 'Smith Osteopaths ' + run, ic_date: '2027-09-06' } });
+  assert.equal((await q(`SELECT heard_from FROM clinical.clients WHERE email=$1`, [em('src1')]))[0].heard_from, 'Smith Osteopaths ' + run);   // carried onto the client
+  const list = (await ct.get('/therapist/enquiries/new')).text; assert.match(list, new RegExp('Smith Osteopaths ' + run));                      // now offered to everyone
+  const sid = (await q(`SELECT id FROM core.referral_sources WHERE name='Facebook'`))[0].id;
+  await man({ l: 'Two', e: em('src2'), x: { heard: String(sid) } });
+  assert.equal((await q(`SELECT heard_from FROM clinical.enquiries WHERE email=$1`, [em('src2')]))[0].heard_from, 'Facebook');
+  await man({ l: 'Three', e: em('src3'), x: { heard: 'other', heard_other: 'smith osteopaths ' + run } });                                     // same name, any case: no duplicate
+  assert.equal((await q(`SELECT count(*)::int n FROM core.referral_sources WHERE lower(name)=lower($1)`, ['Smith Osteopaths ' + run]))[0].n, 1);
+  const pg = (await cp.get('/practice/sources')).text; assert.match(pg, /Smith Osteopaths/); assert.ok(!pg.includes(em('src1')));
+  assert.match((await cp.get('/practice/stats')).text, /How they heard about us/);
+  const rid = (await q(`SELECT id FROM core.referral_sources WHERE name=$1`, ['Smith Osteopaths ' + run]))[0].id;
+  await cp.post('/practice/sources', { id: String(rid), action: 'rename', name: 'Smith Osteo Clinic ' + run });
+  assert.equal((await q(`SELECT heard_from FROM clinical.clients WHERE email=$1`, [em('src1')]))[0].heard_from, 'Smith Osteo Clinic ' + run);
+  await cp.post('/practice/sources', { id: String(rid), action: 'retire' });
+  assert.ok(!(await ct.get('/therapist/enquiries/new')).text.includes('Smith Osteo Clinic ' + run));
+});

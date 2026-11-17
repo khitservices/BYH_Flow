@@ -15,6 +15,7 @@ const V = require('../views/pages');
 const consult = require('../lib/consult');
 const archive = require('../lib/archive');
 
+const sources = require('../lib/sources');
 const router = express.Router();
 const th = A.requireRole('therapist', '/staff/therapist', V.forbidden);
 const EMAIL_RE = /^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/;
@@ -96,14 +97,15 @@ router.get('/therapist/enquiries', th, async (req, res) => {
   res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows, { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
 });
 
-router.get('/therapist/enquiries/new', th, (_req, res) => res.send(V.enquiryManual({ enquiry_date: T.inputDate(new Date()) })));
+router.get('/therapist/enquiries/new', th, async (_req, res) => res.send(V.enquiryManual({ enquiry_date: T.inputDate(new Date()) }, null, await sources.active())));
 
 router.post('/therapist/enquiries/add', th, async (req, res) => {
   const me = req.session.staff, b = req.body, child = b.type === 'child';
   const f = { type: child ? 'child' : 'adult', first: text(b.first_name), last: text(b.last_name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40),
     address: text(b.address, 300), enquiry_date: text(b.enquiry_date, 10), ic_date: text(b.ic_date, 10), ic_time: text(b.ic_time, 5) || '10:00', notes: text(b.notes, 1000),
     guardian_name: text(b.guardian_name), relationship: text(b.relationship), guardian_email: String(b.guardian_email || '').trim().toLowerCase().slice(0, 254), guardian_phone: text(b.guardian_phone, 40) };
-  const again = msg => res.status(400).send(V.enquiryManual(f, msg));
+  f.heard = text(b.heard, 20); f.heard_other = text(b.heard_other, 100);
+  const again = async msg => res.status(400).send(V.enquiryManual(f, msg, await sources.active()));
   const name = `${f.first} ${f.last}`.trim();
   if (!f.first || !f.last) return again('Enter a first and last name.');
   if (f.email && !EMAIL_RE.test(f.email)) return again('That email address does not look right.');
@@ -113,10 +115,10 @@ router.post('/therapist/enquiries/add', th, async (req, res) => {
   const ed = f.enquiry_date && /^\d{4}-\d{2}-\d{2}$/.test(f.enquiry_date) && !isNaN(new Date(f.enquiry_date)) ? f.enquiry_date : T.inputDate(new Date());
   let ic = null;
   if (f.ic_date) { ic = T.fromLocal(f.ic_date, f.ic_time); if (!ic) return again('Enter a real consultation date and time.'); }
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, address, enquiry_date, notes, stage, guardian_name, relationship, guardian_email, guardian_phone)
-    VALUES ($1,'phone',$2,$3,$4,$5,$6,$7,$8,'new',$9,$10,$11,$12) RETURNING *`,
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, address, enquiry_date, notes, stage, guardian_name, relationship, guardian_email, guardian_phone, heard_from)
+    VALUES ($1,'phone',$2,$3,$4,$5,$6,$7,$8,'new',$9,$10,$11,$12,$13) RETURNING *`,
     [me.id, child, name, f.email || null, f.phone || null, f.address || null, ed, f.notes || null,
-     child ? f.guardian_name : null, child ? f.relationship || null : null, child ? f.guardian_email || null : null, child ? f.guardian_phone || null : null]);
+     child ? f.guardian_name : null, child ? f.relationship || null : null, child ? f.guardian_email || null : null, child ? f.guardian_phone || null : null, await sources.resolve(f.heard, f.heard_other)]);
   await audit(req, 'enquiry.added', { actorType: 'staff', actorId: me.id, subjectType: 'enquiry', subjectId: e.id, detail: { channel: 'phone' } });
   if (!ic) return res.redirect('/therapist/enquiries?msg=added');
   try { const r = await consult.bookFromEnquiry({ req, me, enquiry: e, at: ic }); return res.redirect(`/therapist/client/${r.client.id}?msg=${r.invited ? 'ic_set' : 'ic_set_nomail'}`); }
