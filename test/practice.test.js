@@ -505,7 +505,14 @@ test('enquiry links detect where the visitor came from and fill in how they hear
   assert.equal(await hid('/enquire?gclid=abc123'), 'google');
   assert.equal(await hid('/enquire?fbclid=zzz'), 'facebook');
   assert.equal(await hid('/enquire?utm_source=Instagram'), 'facebook');
-  assert.equal(await hid('/enquire', { referer: 'https://www.google.com/' }), 'google');
+  const hh = async (path, headers = {}) => { const t = await (await fetch(base + path, { headers })).text(); return (t.match(/name="heard" value="([^"]*)"/) || [])[1]; };
+  assert.equal(await hh('/enquire?utm_source=instagram'), 'Instagram');
+  assert.equal(await hh('/enquire?fbclid=1'), 'Facebook');
+  assert.equal(await hh('/enquire?utm_source=linkedin'), 'LinkedIn');
+  assert.equal(await hh('/enquire', { referer: 'https://www.google.co.uk/' }), 'Browser search');   // search result, not an ad
+  assert.equal(await hh('/enquire?gclid=1', { referer: 'https://www.google.com/' }), 'Google ads');    // an ad click beats the referrer
+  assert.equal(await hh('/enquire?utm_source=<b>'), '');
+  assert.equal(await hid('/enquire', { referer: 'https://www.google.com/' }), 'website');      // organic search is not an ad
   assert.equal(await hid('/enquire', { referer: 'https://l.facebook.com/l.php?u=x' }), 'facebook');
   assert.equal(await hid('/enquire?utm_source=<script>'), 'website');                      // unknown tags change nothing
   assert.equal(await hid('/enquire?src=google&fbclid=1'), 'google');                       // our own tag wins
@@ -517,7 +524,7 @@ test('enquiry links detect where the visitor came from and fill in how they hear
   assert.match(await (await fetch(base + '/enquire?gclid=1&utm_campaign=Spring%20Stress%20Ads')).text(), /name="campaign" value="Spring Stress Ads"/);
   await post('10.80.1.5', { src: 'google', campaign: 'Spring Stress Ads', name: 'Camp Person', email: em('campp') });
   const h = async e => (await q(`SELECT channel, heard_from FROM clinical.enquiries WHERE email=$1`, [e]))[0];
-  assert.deepEqual(await h(em('adp')), { channel: 'google', heard_from: 'Google' });
+  assert.deepEqual(await h(em('adp')), { channel: 'google', heard_from: 'Google ads' });
   assert.deepEqual(await h(em('fbp')), { channel: 'facebook', heard_from: 'Facebook' });
   assert.deepEqual(await h(em('dirp')), { channel: 'website', heard_from: 'Website' });
   assert.equal((await q(`SELECT count(*)::int n FROM core.referral_sources`))[0].n, before);   // nothing new invented
@@ -543,4 +550,25 @@ test('therapist statistics: the same figures as the manager, for that therapist 
   assert.equal((await cp.get('/therapist/stats')).status, 403);                                                      // the manager keeps their own page
   assert.match((await cp.get('/practice/stats')).text, /By therapist/);
   assert.equal((await client().get('/therapist/stats')).status, 302);
+});
+
+test('the practice list of sources, and who referred them', { skip }, async () => {
+  const names = (await q(`SELECT name FROM core.referral_sources WHERE active ORDER BY name`)).map(r => r.name);
+  for (const n of ['Facebook', 'Instagram', 'Google ads', 'Referral', 'Hypnotherapy directory', 'Browser search', 'Event referral', 'Previous client', 'LinkedIn', 'Website']) assert.ok(names.includes(n), n);
+  const t = await addStaff('Thera Ref', 'therapist'), c = await staffIn(t.email, '10.82.1.1');
+  const ref = (await q(`SELECT id FROM core.referral_sources WHERE name='Referral'`))[0].id;
+  await c.post('/therapist/enquiries/add', { type: 'adult', first_name: 'Ref', last_name: 'Erred', phone: '07700900222', email: em('referred'), heard: String(ref), referrer: 'Jo Bloggs' });
+  const e = (await q(`SELECT id, heard_from, referrer_name FROM clinical.enquiries WHERE name='Ref Erred' AND therapist_id=$1`, [t.id]))[0];
+  assert.equal(e.heard_from, 'Referral'); assert.equal(e.referrer_name, 'Jo Bloggs');
+  assert.match((await c.get('/therapist/enquiries')).text, /referred by Jo Bloggs/);
+  // a public enquiry arrives with nothing known; the therapist sets it afterwards; a referrer is only kept for Referral
+  await client('10.82.1.2').post('/enquire', { therapist: t.id, name: 'Later Set', email: em('laterset') });
+  const l = (await q(`SELECT id FROM clinical.enquiries WHERE email=$1`, [em('laterset')]))[0].id;
+  const dir = (await q(`SELECT id FROM core.referral_sources WHERE name='Hypnotherapy directory'`))[0].id;
+  await c.post(`/therapist/enquiries/${l}`, { action: 'heard', heard: String(dir), referrer: 'Should Not Stick' });
+  assert.deepEqual((await q(`SELECT heard_from, referrer_name FROM clinical.enquiries WHERE id=$1`, [l]))[0], { heard_from: 'Hypnotherapy directory', referrer_name: null });
+  // it follows the enquiry onto the client
+  await c.post(`/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-10-04', time: '10:00' });
+  const cl = (await q(`SELECT heard_from, referrer_name FROM clinical.clients WHERE therapist_id=$1 AND name='Ref Erred'`, [t.id]))[0];
+  assert.deepEqual(cl, { heard_from: 'Referral', referrer_name: 'Jo Bloggs' });
 });

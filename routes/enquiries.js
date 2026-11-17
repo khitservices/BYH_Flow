@@ -28,24 +28,26 @@ const PUBLIC_SRC = ['website', 'google', 'facebook'];
 // so tagged ad links are the reliable way.
 function detectSrc(req) {
   const qy = req.query || {};
-  if (PUBLIC_SRC.includes(qy.src)) return qy.src;
-  if (qy.gclid || qy.gbraid || qy.wbraid) return 'google';
-  if (qy.fbclid) return 'facebook';
   const u = String(qy.utm_source || '').toLowerCase();
-  if (/google|adwords/.test(u)) return 'google';
-  if (/facebook|instagram|^fb$|^ig$|meta/.test(u)) return 'facebook';
   let host = ''; try { host = new URL(req.get('referer') || '').hostname.toLowerCase(); } catch (_) {}
-  if (/(^|\.)(google|bing)\./.test(host)) return 'google';
-  if (/(^|\.)(facebook|instagram|fb)\./.test(host) || /(^|\.)l\.facebook\.com$/.test(host)) return 'facebook';
-  return null;
+  const from = re => re.test(host);
+  let heard = null;
+  if (qy.gclid || qy.gbraid || qy.wbraid || /google|adwords/.test(u)) heard = 'Google ads';
+  else if (/instagram|^ig$/.test(u) || from(/(^|\.)instagram\./)) heard = 'Instagram';
+  else if (qy.fbclid || /facebook|^fb$|meta/.test(u) || from(/(^|\.)(facebook|fb)\./)) heard = 'Facebook';   // fbclid is added by both; the tag or page tells Instagram apart
+  else if (/linkedin/.test(u) || from(/(^|\.)linkedin\./)) heard = 'LinkedIn';
+  else if (from(/(^|\.)(google|bing|duckduckgo|ecosia|yahoo)\./)) heard = 'Browser search';   // arrived from search results, no ad click tag
+  const chan = PUBLIC_SRC.includes(qy.src) ? qy.src : heard === 'Google ads' ? 'google' : heard === 'Facebook' || heard === 'Instagram' ? 'facebook' : null;
+  return { src: chan, heard };
 }
-const campaignOf = v => String(v ?? '').replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 100) || null;
-const HEARD = { google: 'Google', facebook: 'Facebook', website: 'Website' };
-async function heardFor(src) {
-  const name = HEARD[src]; if (!name) return null;
+const DETECTED = ['Google ads', 'Facebook', 'Instagram', 'LinkedIn', 'Browser search', 'Website'];
+const HEARD = { google: 'Google ads', facebook: 'Facebook', website: 'Website' };
+async function heardFor(src, detected) {
+  const name = DETECTED.includes(detected) ? detected : HEARD[src]; if (!name) return null;
   await q(`INSERT INTO core.referral_sources (name) VALUES ($1) ON CONFLICT DO NOTHING`, [name]);
   return name;
 }
+const campaignOf = v => String(v ?? '').replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 100) || null;
 
 async function slugFor(staffId) {
   const r = await one(`SELECT enquiry_slug FROM core.staff WHERE id=$1`, [staffId]);
@@ -59,13 +61,13 @@ const activeTherapists = () => q(`SELECT id, name FROM core.staff WHERE role='th
 // ---------- public ----------
 router.get('/enquire', async (req, res) => {
   const list = await activeTherapists();
-  res.send(V.enquireForm({ therapists: list, src: detectSrc(req) || 'website', campaign: campaignOf(req.query.utm_campaign), pick: list.length === 1 ? list[0].id : null }));
+  res.send(V.enquireForm({ therapists: list, src: detectSrc(req).src || 'website', heard: detectSrc(req).heard, campaign: campaignOf(req.query.utm_campaign), pick: list.length === 1 ? list[0].id : null }));
 });
 router.get('/enquire/thanks', (_req, res) => res.send(V.enquireThanks()));
 router.get('/enquire/t/:slug', async (req, res) => {
   const t = await one(`SELECT id, name FROM core.staff WHERE enquiry_slug=$1 AND role='therapist' AND status='active'`, [String(req.params.slug)]);
   if (!t) return res.status(404).send(V.forbidden());
-  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: detectSrc(req) || 'therapist_page', campaign: campaignOf(req.query.utm_campaign) }));
+  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: detectSrc(req).src || 'therapist_page', heard: detectSrc(req).heard, campaign: campaignOf(req.query.utm_campaign) }));
 });
 
 router.post('/enquire', async (req, res) => {
@@ -77,7 +79,7 @@ router.post('/enquire', async (req, res) => {
   const src = b.slug ? (PUBLIC_SRC.includes(b.src) ? b.src : 'therapist_page') : (PUBLIC_SRC.includes(b.src) ? b.src : 'website');
   const f = { name: text(b.name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40), for_child: b.for_child === 'on', child_name: text(b.child_name) };
   // The form is filled in by whoever is enquiring. For a child that is the parent or guardian, so their details go in the guardian fields.
-  const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, campaign: campaignOf(b.campaign), pick: therapist && therapist.id, f, error: msg }));
+  const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, heard: b.heard, campaign: campaignOf(b.campaign), pick: therapist && therapist.id, f, error: msg }));
   if (!therapist) return again('Please choose who you would like to hear from.');
   if (!f.name) return again('Please enter your name.');
   if (!f.email && !f.phone) return again('Please give an email address or a phone number so we can reply.');
@@ -86,8 +88,8 @@ router.post('/enquire', async (req, res) => {
   // Limit counts accepted enquiries only, so a typo in the form never locks anyone out.
   if (limited(`enquire:${req.ip}`, 5, 3600000)) return res.status(429).send(V.enquireThanks('Too many enquiries from this connection. Please try again later.'));
   const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone, heard_from, campaign) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src), campaignOf(b.campaign)]
-                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src), campaignOf(b.campaign)]);
+    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src, b.heard), campaignOf(b.campaign)]
+                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src, b.heard), campaignOf(b.campaign)]);
   await audit(req, 'enquiry.received', { actorType: 'public', subjectType: 'enquiry', subjectId: e.id, detail: { channel: src } });
   try {
     const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [therapist.id]);
@@ -119,7 +121,7 @@ router.get('/therapist/enquiries', th, async (req, res) => {
   const rows = await q(`SELECT * FROM clinical.enquiries WHERE therapist_id=$1 AND archived_at IS NULL AND stage='new' ORDER BY created_at DESC`, [me.id]);
   for (const e of rows) { e.matches = await archive.findMatches(me.id, e); e.live = await archive.findLive(me.id, e); e.elsewhere = await archive.takenElsewhere(me.id, e.for_child ? (e.email || e.guardian_email) : e.email); }
   const [msg, ok] = MSG[String(req.query.msg || '')] || [];
-  res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows, { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
+  res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows, { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire`, sources: await sources.active() }, msg, ok));
 });
 
 router.get('/therapist/enquiries/new', th, async (_req, res) => res.send(V.enquiryManual({ enquiry_date: T.inputDate(new Date()) }, null, await sources.active())));
@@ -129,7 +131,7 @@ router.post('/therapist/enquiries/add', th, async (req, res) => {
   const f = { type: child ? 'child' : 'adult', first: text(b.first_name), last: text(b.last_name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40),
     address: text(b.address, 300), enquiry_date: text(b.enquiry_date, 10), ic_date: text(b.ic_date, 10), ic_time: text(b.ic_time, 5) || '10:00', notes: text(b.notes, 1000),
     guardian_name: text(b.guardian_name), relationship: text(b.relationship), guardian_email: String(b.guardian_email || '').trim().toLowerCase().slice(0, 254), guardian_phone: text(b.guardian_phone, 40) };
-  f.heard = text(b.heard, 20); f.heard_other = text(b.heard_other, 100);
+  f.heard = text(b.heard, 20); f.heard_other = text(b.heard_other, 100); f.referrer = text(b.referrer, 100);
   const again = async msg => res.status(400).send(V.enquiryManual(f, msg, await sources.active()));
   const name = `${f.first} ${f.last}`.trim();
   if (!f.first || !f.last) return again('Enter a first and last name.');
@@ -140,10 +142,11 @@ router.post('/therapist/enquiries/add', th, async (req, res) => {
   const ed = f.enquiry_date && /^\d{4}-\d{2}-\d{2}$/.test(f.enquiry_date) && !isNaN(new Date(f.enquiry_date)) ? f.enquiry_date : T.inputDate(new Date());
   let ic = null;
   if (f.ic_date) { ic = T.fromLocal(f.ic_date, f.ic_time); if (!ic) return again('Enter a real consultation date and time.'); }
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, address, enquiry_date, notes, stage, guardian_name, relationship, guardian_email, guardian_phone, heard_from)
-    VALUES ($1,'phone',$2,$3,$4,$5,$6,$7,$8,'new',$9,$10,$11,$12,$13) RETURNING *`,
+  const heardName = await sources.resolve(f.heard, f.heard_other);
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, address, enquiry_date, notes, stage, guardian_name, relationship, guardian_email, guardian_phone, heard_from, referrer_name)
+    VALUES ($1,'phone',$2,$3,$4,$5,$6,$7,$8,'new',$9,$10,$11,$12,$13,$14) RETURNING *`,
     [me.id, child, name, f.email || null, f.phone || null, f.address || null, ed, f.notes || null,
-     child ? f.guardian_name : null, child ? f.relationship || null : null, child ? f.guardian_email || null : null, child ? f.guardian_phone || null : null, await sources.resolve(f.heard, f.heard_other)]);
+     child ? f.guardian_name : null, child ? f.relationship || null : null, child ? f.guardian_email || null : null, child ? f.guardian_phone || null : null, heardName, f.referrer || null]);
   await audit(req, 'enquiry.added', { actorType: 'staff', actorId: me.id, subjectType: 'enquiry', subjectId: e.id, detail: { channel: 'phone' } });
   if (!ic) return res.redirect('/therapist/enquiries?msg=added');
   try { const r = await consult.bookFromEnquiry({ req, me, enquiry: e, at: ic }); return res.redirect(`/therapist/client/${r.client.id}?msg=${r.invited ? 'ic_set' : 'ic_set_nomail'}`); }
@@ -158,6 +161,11 @@ router.post('/therapist/enquiries/:id', th, async (req, res) => {
   if (action === 'delete') { await q(`DELETE FROM clinical.enquiries WHERE id=$1 AND stage <> 'converted'`, [e.id]); await log('enquiry.deleted'); return done('deleted'); }
   if (e.stage === 'converted') return res.redirect(e.converted_client_id ? `/therapist/client/${e.converted_client_id}` : '/therapist/clients');
   if (action === 'notes') { await q(`UPDATE clinical.enquiries SET notes=$2, last_activity_at=now() WHERE id=$1`, [e.id, text(b.notes, 1000) || null]); return done('saved'); }
+  if (action === 'heard') {   // set or correct where they heard about us (and who referred them)
+    const name = await sources.resolve(b.heard, b.heard_other);
+    await q(`UPDATE clinical.enquiries SET heard_from=$2, referrer_name=$3, last_activity_at=now() WHERE id=$1`, [e.id, name, name === 'Referral' ? text(b.referrer, 100) || null : null]);
+    return done('saved');
+  }
   if (action === 'link_client') {   // the therapist confirms this is a person who is already their client
     const m = (await archive.findLive(me.id, e)).find(x => x.kind === 'client' && x.id === (Number(b.match) || 0));
     if (!m) return done('gone');

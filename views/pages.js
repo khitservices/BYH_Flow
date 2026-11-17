@@ -483,10 +483,10 @@ ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Count
 }
 
 // ---------- enquiries ----------
-const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Phone call' };
+const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook or Instagram ad', phone: 'Phone call' };
 const STAGE = { new: 'Not yet booked', converted: 'Booked a consultation (now a client)' };
 
-function enquireForm({ therapists, therapist, slug, src, campaign, pick, f = {}, error }) {
+function enquireForm({ therapists, therapist, slug, src, heard, campaign, pick, f = {}, error }) {
   const who = therapist
     ? `<p class="muted">Your enquiry will go to ${esc(therapist.name)}.</p><input type="hidden" name="slug" value="${esc(slug)}">`
     : (therapists && therapists.length
@@ -494,7 +494,7 @@ function enquireForm({ therapists, therapist, slug, src, campaign, pick, f = {},
       : '');
   if (!therapist && !(therapists && therapists.length)) return page('Enquiry', '<p>We are not taking enquiries online at the moment. Please get in touch another way.</p>');
   return page('Get in touch', `<p><strong>Get in touch</strong></p><p class="muted">Tell us how to reach you and we will be in touch. Please do not put any health details in this form.</p>${note(error, false)}
-<form method="post" action="/enquire"><input type="hidden" name="src" value="${esc(src)}"><input type="hidden" name="campaign" value="${esc(campaign)}">${who}
+<form method="post" action="/enquire"><input type="hidden" name="src" value="${esc(src)}"><input type="hidden" name="campaign" value="${esc(campaign)}"><input type="hidden" name="heard" value="${esc(heard)}">${who}
 <label for="n">Your name</label><input id="n" name="name" required maxlength="100" value="${esc(f.name)}">
 <label for="e">Email</label><input id="e" name="email" type="email" value="${esc(f.email)}">
 <label for="p">Phone</label><input id="p" name="phone" type="tel" value="${esc(f.phone)}">
@@ -512,7 +512,7 @@ function therapistEnquiries(rows, links, msg, ok) {
     const mail = e.for_child ? e.guardian_email : e.email;
     return `<section class="card" aria-label="${esc(e.name)}">
 <p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ' <span class="muted">(child, under 16)</span>' : ''}<br>
-<span class="muted">${esc(CHANNEL[e.channel])}${e.heard_from ? ` · ${esc(e.heard_from)}` : ''}${e.campaign ? ` · campaign ${esc(e.campaign)}` : ''} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
+<span class="muted">${esc(CHANNEL[e.channel])}${e.heard_from ? ` · ${esc(e.heard_from)}${e.referrer_name ? `, referred by ${esc(e.referrer_name)}` : ''}` : ''}${e.campaign ? ` · campaign ${esc(e.campaign)}` : ''} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
 ${(e.matches || []).map(m => `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Matches an archived ${m.kind === 'client' ? 'client' : 'enquiry'}:</strong> ${esc(m.name)}<br><span class="muted">Archived ${day(m.archived_at)} (${esc(m.reason)}). Check it is the same person.</span></p>
 ${post(e.id, 'restore_match', `<input type="hidden" name="kind" value="${m.kind}"><input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: restore their record</button>`)}</div>`).join('')}
 ${(e.live || []).map(m => m.kind === 'client' ? `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Already your client:</strong> ${esc(m.name)} <span class="muted">(${esc(STATUS[m.status])})</span></p><p style="margin:4px 0"><a href="/therapist/client/${m.id}">Open their record</a></p>${post(e.id, 'link_client', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: close this enquiry and use their record</button>`)}</div>` : `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Possible duplicate:</strong> another enquiry from ${esc(m.name)} has the same contact details.</p>${post(e.id, 'merge_enquiry', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: remove this duplicate</button>`)}</div>`).join('')}
@@ -522,6 +522,9 @@ ${mail ? `<details open><summary>Book the initial consultation</summary>${post(e
 <p class="muted">Booking it moves them to your Clients as "Consultation booked", emails them the date with a calendar file, and invites them to their client area.</p></details>` : ''}
 <details ${e.elsewhere ? 'open' : ''}><summary>Manage</summary>
 ${post(e.id, 'contact', `<label for="me${e.id}">${e.for_child ? "Parent or guardian's email" : 'Email'}</label><input id="me${e.id}" name="email" type="email" value="${esc(mail)}"><label for="mp${e.id}">Phone</label><input id="mp${e.id}" name="phone" type="tel" value="${esc(e.for_child ? e.guardian_phone : e.phone)}"><button class="alt">Change contact details</button>`)}
+${post(e.id, 'heard', `<label for="hs${e.id}">Where they heard about us</label><select id="hs${e.id}" name="heard" ${sel}><option value="">Not known</option>${(links.sources || []).map(s => `<option value="${s.id}"${s.name === e.heard_from ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}<option value="other">Something else (type it below)</option></select>
+<label for="ho${e.id}">Something else</label><input id="ho${e.id}" name="heard_other" maxlength="100">
+<label for="rf${e.id}">If it was a referral: who referred them?</label><input id="rf${e.id}" name="referrer" maxlength="100" value="${esc(e.referrer_name)}"><button class="alt">Save where they heard</button>`)}
 ${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
 ${post(e.id, 'archive', '<button class="alt">Archive (not going ahead)</button>')}
 ${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details></section>`;
@@ -564,6 +567,7 @@ function enquiryManual(f = {}, msg, srcs = []) {
 <label for="ad">Address (optional)</label><input id="ad" name="address" maxlength="300" value="${esc(f.address)}">
 <label for="hf">How did they hear about us?</label><select id="hf" name="heard" ${sel}><option value="">Not known</option>${srcs.map(s => `<option value="${s.id}"${String(f.heard) === String(s.id) ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}<option value="other"${f.heard === 'other' ? ' selected' : ''}>Something else (type it below)</option></select>
 <label for="ho">Something else, for example the name of an osteopath who referred them</label><input id="ho" name="heard_other" maxlength="100" value="${esc(f.heard_other)}">
+<label for="rf">If it was a referral: who referred them? (optional)</label><input id="rf" name="referrer" maxlength="100" value="${esc(f.referrer)}">
 <label for="ed">Enquiry date</label><input id="ed" name="enquiry_date" type="date" value="${esc(f.enquiry_date)}">
 <label for="id">Initial consultation date (optional)</label><input id="id" name="ic_date" type="date" value="${esc(f.ic_date)}">
 <label for="it">Consultation time</label><input id="it" name="ic_time" type="time" value="${esc(f.ic_time || '10:00')}">
