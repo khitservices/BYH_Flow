@@ -476,7 +476,8 @@ ${stat(t.delivered_30, 'Delivered, last 30 days', `${t.cancelled_30} cancelled`)
 <section class="card"><h2>Programmes</h2><p class="muted">${b.repeat_clients || 0} client${(b.repeat_clients || 0) === 1 ? '' : 's'} on a second or later block · ${b.single_blocks || 0} standalone single session${(b.single_blocks || 0) === 1 ? '' : 's'}</p>
 ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Counts by programme"><thead><tr><th>Programme</th><th>Blocks</th><th>Sessions delivered</th></tr></thead><tbody>${b.byProgramme.map(r => `<tr><td>${esc(r.name)}</td><td>${r.blocks}</td><td>${r.delivered}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No programmes started yet.</p>'}</section>
 <section class="card"><h2>Enquiries by route</h2>${bars(en.channel, CHANNEL)}</section>
-<section class="card"><h2>How they heard about us</h2>${bars(en.heard || {}, {})}</section>
+<section class="card"><h2>How they heard about us</h2>${bars(en.heard || {}, Object.fromEntries(Object.keys(en.heard || {}).map(k => [k, k])))}</section>
+<section class="card"><h2>Campaigns</h2>${Object.keys(en.campaign || {}).length ? bars(en.campaign, Object.fromEntries(Object.keys(en.campaign).map(k => [k, k]))) : '<p class="muted">No campaign names recorded yet. Add utm_campaign to your advert links.</p>'}</section>
 <section class="card"><h2>Enquiries by stage</h2><p class="muted">${enqTotal} not archived · ${en.archived || 0} archived · ${t.archived_clients} client${t.archived_clients === 1 ? '' : 's'} did not proceed</p>${bars(en.stage, STAGE)}</section>
 </div>`);
 }
@@ -485,7 +486,7 @@ ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Count
 const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Entered by therapist' };
 const STAGE = { new: 'Not yet booked', converted: 'Booked a consultation (now a client)' };
 
-function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) {
+function enquireForm({ therapists, therapist, slug, src, campaign, pick, f = {}, error }) {
   const who = therapist
     ? `<p class="muted">Your enquiry will go to ${esc(therapist.name)}.</p><input type="hidden" name="slug" value="${esc(slug)}">`
     : (therapists && therapists.length
@@ -493,7 +494,7 @@ function enquireForm({ therapists, therapist, slug, src, pick, f = {}, error }) 
       : '');
   if (!therapist && !(therapists && therapists.length)) return page('Enquiry', '<p>We are not taking enquiries online at the moment. Please get in touch another way.</p>');
   return page('Get in touch', `<p><strong>Get in touch</strong></p><p class="muted">Tell us how to reach you and we will be in touch. Please do not put any health details in this form.</p>${note(error, false)}
-<form method="post" action="/enquire"><input type="hidden" name="src" value="${esc(src)}">${who}
+<form method="post" action="/enquire"><input type="hidden" name="src" value="${esc(src)}"><input type="hidden" name="campaign" value="${esc(campaign)}">${who}
 <label for="n">Your name</label><input id="n" name="name" required maxlength="100" value="${esc(f.name)}">
 <label for="e">Email</label><input id="e" name="email" type="email" value="${esc(f.email)}">
 <label for="p">Phone</label><input id="p" name="phone" type="tel" value="${esc(f.phone)}">
@@ -511,7 +512,7 @@ function therapistEnquiries(rows, links, msg, ok) {
     const mail = e.for_child ? e.guardian_email : e.email;
     return `<section class="card" aria-label="${esc(e.name)}">
 <p style="margin:0"><strong>${esc(e.name)}</strong>${e.for_child ? ' <span class="muted">(child, under 16)</span>' : ''}<br>
-<span class="muted">${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
+<span class="muted">${esc(CHANNEL[e.channel])}${e.heard_from ? ` · ${esc(e.heard_from)}` : ''}${e.campaign ? ` · campaign ${esc(e.campaign)}` : ''} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
 ${(e.matches || []).map(m => `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Matches an archived ${m.kind === 'client' ? 'client' : 'enquiry'}:</strong> ${esc(m.name)}<br><span class="muted">Archived ${day(m.archived_at)} (${esc(m.reason)}). Check it is the same person.</span></p>
 ${post(e.id, 'restore_match', `<input type="hidden" name="kind" value="${m.kind}"><input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: restore their record</button>`)}</div>`).join('')}
 ${(e.live || []).map(m => m.kind === 'client' ? `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Already your client:</strong> ${esc(m.name)} <span class="muted">(${esc(STATUS[m.status])})</span></p><p style="margin:4px 0"><a href="/therapist/client/${m.id}">Open their record</a></p>${post(e.id, 'link_client', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: close this enquiry and use their record</button>`)}</div>` : `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Possible duplicate:</strong> another enquiry from ${esc(m.name)} has the same contact details.</p>${post(e.id, 'merge_enquiry', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: remove this duplicate</button>`)}</div>`).join('')}

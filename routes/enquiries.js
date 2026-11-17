@@ -39,6 +39,7 @@ function detectSrc(req) {
   if (/(^|\.)(facebook|instagram|fb)\./.test(host) || /(^|\.)l\.facebook\.com$/.test(host)) return 'facebook';
   return null;
 }
+const campaignOf = v => String(v ?? '').replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 100) || null;
 const HEARD = { google: 'Google', facebook: 'Facebook', website: 'Website' };
 async function heardFor(src) {
   const name = HEARD[src]; if (!name) return null;
@@ -58,13 +59,13 @@ const activeTherapists = () => q(`SELECT id, name FROM core.staff WHERE role='th
 // ---------- public ----------
 router.get('/enquire', async (req, res) => {
   const list = await activeTherapists();
-  res.send(V.enquireForm({ therapists: list, src: detectSrc(req) || 'website', pick: list.length === 1 ? list[0].id : null }));
+  res.send(V.enquireForm({ therapists: list, src: detectSrc(req) || 'website', campaign: campaignOf(req.query.utm_campaign), pick: list.length === 1 ? list[0].id : null }));
 });
 router.get('/enquire/thanks', (_req, res) => res.send(V.enquireThanks()));
 router.get('/enquire/t/:slug', async (req, res) => {
   const t = await one(`SELECT id, name FROM core.staff WHERE enquiry_slug=$1 AND role='therapist' AND status='active'`, [String(req.params.slug)]);
   if (!t) return res.status(404).send(V.forbidden());
-  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: detectSrc(req) || 'therapist_page' }));
+  res.send(V.enquireForm({ therapist: t, slug: req.params.slug, src: detectSrc(req) || 'therapist_page', campaign: campaignOf(req.query.utm_campaign) }));
 });
 
 router.post('/enquire', async (req, res) => {
@@ -76,7 +77,7 @@ router.post('/enquire', async (req, res) => {
   const src = b.slug ? (PUBLIC_SRC.includes(b.src) ? b.src : 'therapist_page') : (PUBLIC_SRC.includes(b.src) ? b.src : 'website');
   const f = { name: text(b.name), email: String(b.email || '').trim().toLowerCase().slice(0, 254), phone: text(b.phone, 40), for_child: b.for_child === 'on', child_name: text(b.child_name) };
   // The form is filled in by whoever is enquiring. For a child that is the parent or guardian, so their details go in the guardian fields.
-  const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, pick: therapist && therapist.id, f, error: msg }));
+  const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, campaign: campaignOf(b.campaign), pick: therapist && therapist.id, f, error: msg }));
   if (!therapist) return again('Please choose who you would like to hear from.');
   if (!f.name) return again('Please enter your name.');
   if (!f.email && !f.phone) return again('Please give an email address or a phone number so we can reply.');
@@ -84,9 +85,9 @@ router.post('/enquire', async (req, res) => {
   if (f.for_child && !f.child_name) return again("Please enter the child's name.");
   // Limit counts accepted enquiries only, so a typo in the form never locks anyone out.
   if (limited(`enquire:${req.ip}`, 5, 3600000)) return res.status(429).send(V.enquireThanks('Too many enquiries from this connection. Please try again later.'));
-  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone, heard_from) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src)]
-                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src)]);
+  const [e] = await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, email, phone, guardian_name, guardian_email, guardian_phone, heard_from, campaign) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+    f.for_child ? [therapist.id, src, true, f.child_name, null, null, f.name, f.email || null, f.phone || null, await heardFor(src), campaignOf(b.campaign)]
+                : [therapist.id, src, false, f.name, f.email || null, f.phone || null, null, null, null, await heardFor(src), campaignOf(b.campaign)]);
   await audit(req, 'enquiry.received', { actorType: 'public', subjectType: 'enquiry', subjectId: e.id, detail: { channel: src } });
   try {
     const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [therapist.id]);

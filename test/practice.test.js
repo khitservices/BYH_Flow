@@ -514,11 +514,16 @@ test('enquiry links detect where the visitor came from and fill in how they hear
   await post('10.80.1.1', { src: 'google', name: 'Ad Person', email: em('adp') });
   await post('10.80.1.2', { src: 'facebook', name: 'Fb Person', email: em('fbp') });
   await post('10.80.1.3', { name: 'Direct Person', email: em('dirp') });
+  assert.match(await (await fetch(base + '/enquire?gclid=1&utm_campaign=Spring%20Stress%20Ads')).text(), /name="campaign" value="Spring Stress Ads"/);
+  await post('10.80.1.5', { src: 'google', campaign: 'Spring Stress Ads', name: 'Camp Person', email: em('campp') });
   const h = async e => (await q(`SELECT channel, heard_from FROM clinical.enquiries WHERE email=$1`, [e]))[0];
   assert.deepEqual(await h(em('adp')), { channel: 'google', heard_from: 'Google' });
   assert.deepEqual(await h(em('fbp')), { channel: 'facebook', heard_from: 'Facebook' });
   assert.deepEqual(await h(em('dirp')), { channel: 'website', heard_from: 'Website' });
   assert.equal((await q(`SELECT count(*)::int n FROM core.referral_sources`))[0].n, before);   // nothing new invented
+  assert.equal((await q(`SELECT campaign FROM clinical.enquiries WHERE email=$1`, [em('campp')]))[0].campaign, 'Spring Stress Ads');
+  const cm = await addStaff('Mgr Camp', 'practice_manager'), cpm = await staffIn(cm.email, '10.80.1.9');
+  const st = (await cpm.get('/practice/stats')).text; assert.match(st, /Spring Stress Ads/); assert.match(st, /Facebook/); assert.ok(!st.includes(em('campp')));
   await post('10.80.1.4', { src: '<script>', name: 'Odd Person', email: em('oddp') });
   assert.equal((await h(em('oddp'))).heard_from, 'Website');
 });
