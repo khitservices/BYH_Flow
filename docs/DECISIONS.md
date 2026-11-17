@@ -269,7 +269,7 @@
 - Still assumed, not yet confirmed by Kev: manager statistics count sessions per location.
 
 ## How did you hear about us (17 Nov 2026)
-- Separate from the arrival route (website, therapist page, Google, Facebook, entered by therapist). New managed list "Client sources" (practice manager menu): seeded Website, Google, Facebook, Word of mouth, Recommended by another professional. On the therapist's manual enquiry form it is a select with "Something else", where they type a new source (for example an osteopath who refers); it joins the list for everyone (matched ignoring case, so no duplicates). Stored as text on the enquiry and copied onto the client; renaming updates existing records; retiring only stops it being offered. Manager sees counts only, on Client sources and Statistics.
+- Separate from the arrival route (website, therapist page, Google, Facebook, phone call). New managed list "Client sources" (practice manager menu): seeded Website, Google, Facebook, Word of mouth, Recommended by another professional. On the therapist's manual enquiry form it is a select with "Something else", where they type a new source (for example an osteopath who refers); it joins the list for everyone (matched ignoring case, so no duplicates). Stored as text on the enquiry and copied onto the client; renaming updates existing records; retiring only stops it being offered. Manager sees counts only, on Client sources and Statistics.
 - Not yet on: the public enquiry form (no question asked there; route is known) and the therapist's add-client form. Say if you want it there.
 
 ## Weekly score built (17 Nov 2026)

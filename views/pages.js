@@ -483,7 +483,7 @@ ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Count
 }
 
 // ---------- enquiries ----------
-const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Entered by therapist' };
+const CHANNEL = { website: 'Website', therapist_page: "Therapist's own page", google: 'Google ad', facebook: 'Facebook', phone: 'Phone call' };
 const STAGE = { new: 'Not yet booked', converted: 'Booked a consultation (now a client)' };
 
 function enquireForm({ therapists, therapist, slug, src, campaign, pick, f = {}, error }) {
@@ -552,7 +552,7 @@ function archivePage(clients, enquiries, msg, ok) {
 
 function enquiryManual(f = {}, msg, srcs = []) {
   const child = f.type === 'child';
-  return read('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone or in person.</p>${note(msg, false)}
+  return read('Add an enquiry', `<p><strong>Add an enquiry</strong></p><p class="muted">For an enquiry that came by phone call. Ask them where they heard about us and choose it below.</p>${note(msg, false)}
 <form method="post" action="/therapist/enquiries/add">
 <fieldset style="border:1px solid #ddd;border-radius:6px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Who is it for?</legend>
 <label class="check"><input type="radio" name="type" value="adult" ${child ? '' : 'checked'}> Adult</label><label class="check"><input type="radio" name="type" value="child" ${child ? 'checked' : ''}> Child under 16</label>
