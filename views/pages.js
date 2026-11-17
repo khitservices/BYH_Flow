@@ -10,7 +10,7 @@ const MENUS = {
     { label: 'Home', href: '/therapist', exact: true },
     { group: 'Work' }, { label: 'Schedule', href: '/therapist/schedule' }, { label: 'Book a session', href: '/therapist/book' },
     { group: 'People' }, { label: 'Enquiries', href: '/therapist/enquiries' }, { label: 'Clients', href: '/therapist/clients' }, { label: 'Archive', href: '/therapist/archive' },
-    { group: 'You' }, { label: 'My account', href: '/therapist/account' },
+    { group: 'You' }, { label: 'My statistics', href: '/therapist/stats' }, { label: 'My account', href: '/therapist/account' },
   ],
   practice_manager: [
     { label: 'Overview', href: '/practice', exact: true },
@@ -456,22 +456,22 @@ ${logo ? '<form method="post" action="/practice/settings/logo" enctype="multipar
 }
 
 // Practice statistics (practice manager). Numbers only.
-function practiceStats(st) {
+function practiceStats(st, mine) {
   const t = st.totals, a = st.accounts, b = st.blocks || {}, en = st.enquiries;
   const stat = (n, label, sub) => `<section class="card"><h2>${label}</h2><span class="stat">${n}</span>${sub ? `<p class="muted">${sub}</p>` : ''}</section>`;
   const row = (n, r, bold) => `<tr${bold ? ' style="font-weight:700"' : ''}><td>${esc(n)}</td><td>${r.active_clients}</td><td>${r.upcoming}</td><td>${r.delivered_30}</td><td>${r.cancelled_30}</td><td>${r.change_requests}</td></tr>`;
   const bars = (obj, labels) => { const keys = Object.keys(labels), max = Math.max(1, ...keys.map(k => obj[k] || 0));
     return keys.map(k => `<div style="display:grid;grid-template-columns:150px 1fr 32px;gap:8px;align-items:center;margin:5px 0;font-size:14px"><span>${esc(labels[k])}</span><span style="background:#eef3f3;border-radius:4px;height:10px;display:block"><span style="display:block;height:10px;border-radius:4px;background:#007c7e;width:${Math.round(100 * (obj[k] || 0) / max)}%"></span></span><strong>${obj[k] || 0}</strong></div>`).join(''); };
   const enqTotal = Object.values(en.stage).reduce((x, y) => x + y, 0);
-  return wide('Practice statistics', `<p style="margin:0 0 4px"><strong style="font-size:22px">Practice statistics</strong></p><p class="muted" style="margin:0">Numbers only. Client names and details are never shown in this account.</p>
+  return wide(mine ? 'My statistics' : 'Practice statistics', `<p style="margin:0 0 4px"><strong style="font-size:22px">${mine ? 'My statistics' : 'Practice statistics'}</strong></p><p class="muted" style="margin:0">${mine ? 'The same figures the practice manager sees, but for your own clients and enquiries only.' : 'Numbers only. Client names and details are never shown in this account.'}</p>
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-${stat(a.therapists, 'Therapists', `${a.suspended ? `${a.suspended} suspended · ` : ''}${a.managers} manager${a.managers === 1 ? '' : 's'}`)}
+${mine ? '' : stat(a.therapists, 'Therapists', `${a.suspended ? `${a.suspended} suspended · ` : ''}${a.managers} manager${a.managers === 1 ? '' : 's'}`)}
 ${stat(t.active_clients, 'Active clients', `${t.consultation_clients} at consultation stage · ${t.readonly_clients} read-only · ${t.closed_clients} closed`)}
 ${stat(t.upcoming, 'Upcoming sessions', `${t.change_requests} change request${t.change_requests === 1 ? '' : 's'} waiting`)}
 ${stat(t.delivered_30, 'Delivered, last 30 days', `${t.cancelled_30} cancelled`)}
 </div>
-<section class="card" style="margin:16px 0"><h2>By therapist</h2><div style="overflow-x:auto"><table class="list" aria-label="Counts by therapist"><thead><tr><th>Therapist</th><th>Active clients</th><th>Upcoming</th><th>Delivered (30d)</th><th>Cancelled (30d)</th><th>Change requests</th></tr></thead>
-<tbody>${st.therapists.map(r => row(r.name + (r.status === 'suspended' ? ' (suspended)' : ''), r)).join('')}${row('Practice total', t, true)}</tbody></table></div></section>
+${mine ? '' : `<section class="card" style="margin:16px 0"><h2>By therapist</h2><div style="overflow-x:auto"><table class="list" aria-label="Counts by therapist"><thead><tr><th>Therapist</th><th>Active clients</th><th>Upcoming</th><th>Delivered (30d)</th><th>Cancelled (30d)</th><th>Change requests</th></tr></thead>
+<tbody>${st.therapists.map(r => row(r.name + (r.status === 'suspended' ? ' (suspended)' : ''), r)).join('')}${row('Practice total', t, true)}</tbody></table></div></section>`}
 <div class="grid">
 <section class="card"><h2>Programmes</h2><p class="muted">${b.repeat_clients || 0} client${(b.repeat_clients || 0) === 1 ? '' : 's'} on a second or later block · ${b.single_blocks || 0} standalone single session${(b.single_blocks || 0) === 1 ? '' : 's'}</p>
 ${b.byProgramme && b.byProgramme.length ? `<table class="list" aria-label="Counts by programme"><thead><tr><th>Programme</th><th>Blocks</th><th>Sessions delivered</th></tr></thead><tbody>${b.byProgramme.map(r => `<tr><td>${esc(r.name)}</td><td>${r.blocks}</td><td>${r.delivered}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No programmes started yet.</p>'}</section>

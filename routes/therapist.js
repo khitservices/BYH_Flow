@@ -301,6 +301,7 @@ router.post('/therapist/client/:id', th, async (req, res) => {
   done('unknown');
 });
 
+router.get('/therapist/stats', th, async (req, res) => res.send(V.practiceStats(await require('../lib/stats').practiceStats(req.session.staff.id), true)));
 router.get('/therapist/archive', th, async (req, res) => {
   const me = req.session.staff;
   const clients = await q(`SELECT id, name, archived_at FROM clinical.clients WHERE therapist_id=$1 AND archived_at IS NOT NULL ORDER BY archived_at DESC`, [me.id]);

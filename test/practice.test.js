@@ -192,7 +192,7 @@ test('therapist pipeline: phone capture, booking the consultation makes them a c
 });
 
 test('practice statistics: the manager sees counts only, and nobody else gets the page', { skip }, async () => {
-  const a = await addStaff('Thera Stat', 'therapist'), p = await addStaff('Mgr Stat', 'practice_manager');
+  const a = await addStaff('Thera Stat', 'therapist'), p = await addStaff('Mgr StatsPage', 'practice_manager');
   const ca = await staffIn(a.email), cp = await staffIn(p.email);
   await add(ca, { name: 'Secretname Clientperson', email: em('secret'), first_date: '2027-09-01', first_time: '10:00' });
   await add(ca, { name: 'Another Person', email: em('other') });
@@ -526,4 +526,21 @@ test('enquiry links detect where the visitor came from and fill in how they hear
   const st = (await cpm.get('/practice/stats')).text; assert.match(st, /Spring Stress Ads/); assert.match(st, /Facebook/); assert.ok(!st.includes(em('campp')));
   await post('10.80.1.4', { src: '<script>', name: 'Odd Person', email: em('oddp') });
   assert.equal((await h(em('oddp'))).heard_from, 'Website');
+});
+
+test('therapist statistics: the same figures as the manager, for that therapist only', { skip }, async () => {
+  const a = await addStaff('Thera Alpha Stats', 'therapist'), b = await addStaff('Thera Beta Stats', 'therapist'), p = await addStaff('Mgr TherapistStats', 'practice_manager');
+  const ca = await staffIn(a.email, '10.81.1.1'), cb = await staffIn(b.email, '10.81.1.2'), cp = await staffIn(p.email, '10.81.1.3');
+  await add(ca, { name: 'Stat A1', email: em('sa1') }); await add(ca, { name: 'Stat A2', email: em('sa2') }); await add(cb, { name: 'Stat B1', email: em('sb1') });
+  await ca.post('/therapist/enquiries/add', { type: 'adult', first_name: 'Enq', last_name: 'A', phone: '07700900111', heard: 'other', heard_other: 'OnlyAsSource ' + run });
+  const mine = async c => (await c.get('/therapist/stats')).text;
+  const ta = await mine(ca), tb = await mine(cb);
+  assert.match(ta, /My statistics/); assert.match(ta, /OnlyAsSource/); assert.ok(!tb.includes('OnlyAsSource'));       // B never sees A's enquiries
+  const active = t => Number(t.match(/Active clients<\/h2><span class="stat">(\d+)/)[1]);
+  assert.equal(active(ta), 2); assert.equal(active(tb), 1);
+  assert.ok(!/By therapist/.test(ta)); assert.ok(!ta.includes(em('sa1')) && !ta.includes('Stat A1'));                 // counts only, even for the owner
+  assert.match((await ca.get('/therapist')).text, /My statistics/);
+  assert.equal((await cp.get('/therapist/stats')).status, 403);                                                      // the manager keeps their own page
+  assert.match((await cp.get('/practice/stats')).text, /By therapist/);
+  assert.equal((await client().get('/therapist/stats')).status, 302);
 });
