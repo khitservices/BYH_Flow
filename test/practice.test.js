@@ -308,3 +308,59 @@ test('blocks of sessions: a further block or a standalone session is kept distin
   const cl = await clientIn(em('blocky')); const home = (await cl.get('/journal')).text; assert.match(home, new RegExp(`${name}: session 1 of 1`)); assert.match(home, /Earlier:/);
   const pm = (await cp.get('/practice/stats')).text; assert.match(pm, new RegExp(name)); assert.ok(!pm.includes('Blocky'));
 });
+
+test('client can ask to move or cancel the consultation and sessions; therapist is told; only their own, only future ones', { skip }, async () => {
+  const t = await addStaff('Thera Ask', 'therapist'), ct = await staffIn(t.email);
+  await post(ct, '/therapist/enquiries/add', { type: 'adult', first_name: 'Ivy', last_name: 'Ask', email: em('ivy'), ic_date: '2027-05-04', ic_time: '10:00' });
+  const id = await idOf(em('ivy')); const cl = await clientIn(em('ivy'));
+  assert.match((await cl.get('/journal/sessions')).text, /4 May 2027 at 10:00/);
+  const n = mail.outbox.length;
+  assert.match((await post(cl, '/journal/sessions', { target: 'ic', kind: 'reschedule', reason: 'Mornings are hard' })).loc, /msg=asked/);
+  const m = mail.outbox.slice(n).find(x => x.to === t.email); assert.ok(m); assert.ok(!/Ivy|Mornings/.test(m.html));      // no personal detail by email
+  assert.match((await cl.get('/journal/sessions')).text, /You asked to move this: Mornings are hard/);
+  let rec = (await ct.get(`/therapist/client/${id}`)).text; assert.match(rec, /Client asked to move this: Mornings are hard/);
+  assert.match((await ct.get('/therapist/clients')).text, /Asked to change a session/); assert.match((await ct.get('/therapist')).text, /asked to change a session/);
+  await post(ct, `/therapist/client/${id}`, { action: 'ic', date: '2027-05-06', time: '11:00' });             // moving it clears the request
+  assert.ok(!(await ct.get(`/therapist/client/${id}`)).text.includes('Client asked to'));
+  await post(cl, '/journal/sessions', { target: 'ic', kind: 'cancel' }); await post(cl, '/journal/sessions', { target: 'ic', action: 'withdraw' });
+  assert.equal((await q(`SELECT ic_change_requested_at FROM clinical.clients WHERE id=$1`, [id]))[0].ic_change_requested_at, null);
+  // sessions: a future one can be asked about, a past one and someone else's cannot
+  await post(ct, `/therapist/client/${id}`, { action: 'proceed', programme: await progId(8) });
+  await post(ct, '/therapist/book', { client_id: id, date: '2027-06-01', time: '10:00' }); await post(ct, '/therapist/book', { client_id: id, date: '2026-01-01', time: '10:00' });
+  const fut = (await q(`SELECT id FROM clinical.appointments WHERE client_id=$1 AND starts_at > now()`, [id]))[0].id, past = (await q(`SELECT id FROM clinical.appointments WHERE client_id=$1 AND starts_at < now()`, [id]))[0].id;
+  assert.match((await post(cl, '/journal/sessions', { target: String(fut), kind: 'cancel', reason: 'Away' })).loc, /msg=asked/);
+  assert.match((await ct.get(`/therapist/client/${id}/sessions`)).text, /Client asked to cancel this: Away/);
+  assert.match((await post(cl, '/journal/sessions', { target: String(past), kind: 'cancel' })).loc, /msg=gone/);
+  await add(ct, { name: 'Other Person', email: em('otherp') }); const oid = await idOf(em('otherp'));
+  await post(ct, '/therapist/book', { client_id: oid, date: '2027-06-02', time: '10:00' });
+  const theirs = (await q(`SELECT id FROM clinical.appointments WHERE client_id=$1`, [oid]))[0].id;
+  assert.match((await post(cl, '/journal/sessions', { target: String(theirs), kind: 'cancel' })).loc, /msg=gone/);
+  assert.equal((await q(`SELECT change_requested_at FROM clinical.appointments WHERE id=$1`, [theirs]))[0].change_requested_at, null);
+  assert.equal((await client().get('/journal/sessions')).status, 302);                                            // signed out: sign in first
+});
+
+test('duplicate email: the enquiry shows who it matches and can be linked or removed; another therapist\'s client is never named', { skip }, async () => {
+  const a = await addStaff('Thera Dup', 'therapist'), b = await addStaff('Thera Dup2', 'therapist');
+  const ca = await staffIn(a.email), cb = await staffIn(b.email), anon = client('10.20.30.50');
+  await add(ca, { name: 'Dora Dup', email: em('dora') }); const cid = await idOf(em('dora'));
+  await post(anon, '/enquire', { therapist: a.id, name: 'Dora D', email: em('dora') });
+  const e = (await q(`SELECT * FROM clinical.enquiries WHERE name='Dora D'`))[0];
+  let page = (await ca.get('/therapist/enquiries')).text; assert.match(page, /Already your client:<\/strong> Dora Dup/); assert.match(page, /Change contact details/);
+  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-07-01', time: '10:00' })).loc, '/therapist/enquiries?msg=taken');
+  assert.equal((await post(ca, `/therapist/enquiries/${e.id}`, { action: 'link_client', match: cid })).loc, `/therapist/client/${cid}?msg=saved`);
+  assert.equal((await q(`SELECT stage, converted_client_id FROM clinical.enquiries WHERE id=$1`, [e.id]))[0].stage, 'converted');
+  assert.ok(!(await ca.get('/therapist/enquiries')).text.includes('Dora D'));
+  // two enquiries from the same person: remove the duplicate
+  await post(ca, '/therapist/enquiries/add', { type: 'adult', first_name: 'Twin', last_name: 'One', email: em('twin') });
+  await post(anon, '/enquire', { therapist: a.id, name: 'Twin Two', email: em('twin') });
+  const two = (await q(`SELECT id FROM clinical.enquiries WHERE name='Twin Two'`))[0], one1 = (await q(`SELECT id FROM clinical.enquiries WHERE name='Twin One'`))[0];
+  assert.match((await ca.get('/therapist/enquiries')).text, /Possible duplicate/);
+  assert.equal((await post(ca, `/therapist/enquiries/${two.id}`, { action: 'merge_enquiry', match: one1.id })).loc, '/therapist/enquiries?msg=merged');
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE name LIKE 'Twin%'`))[0].n, 1);
+  // another therapist's enquiry with Dora's email: told it cannot be used, nothing about whose, and can change the email and carry on
+  await post(anon, '/enquire', { therapist: b.id, name: 'Dora Again', email: em('dora') });
+  const x = (await q(`SELECT id FROM clinical.enquiries WHERE name='Dora Again'`))[0];
+  page = (await cb.get('/therapist/enquiries')).text; assert.match(page, /already registered to a client in this practice/); assert.ok(!page.includes('Dora Dup'));
+  await post(cb, `/therapist/enquiries/${x.id}`, { action: 'contact', email: em('dora2') });
+  assert.equal((await post(cb, `/therapist/enquiries/${x.id}`, { action: 'consult', date: '2027-07-02', time: '10:00' })).loc, '/therapist/enquiries?msg=booked');
+});

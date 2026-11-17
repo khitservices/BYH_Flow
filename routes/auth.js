@@ -301,4 +301,41 @@ router.get('/journal', A.requireRole('client', '/', V.forbidden), async (req, re
     pos: c.programme_sessions ? { on: Math.min(c.sessions_before_app + held + 1, c.programme_sessions), of: c.programme_sessions } : null }));
 });
 
+// ---- client: my sessions, and asking to rearrange ----
+const myClient = A.requireRole('client', '/', V.forbidden);
+const CMSG = { asked: ['Your therapist has been asked. They will be in touch to arrange it.', true], withdrawn: ['Request withdrawn.', true], gone: ['That appointment is not available to change.', false] };
+async function sessionsData(id) {
+  const c = await one(`SELECT c.*, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
+  const appts = await q(`SELECT id, starts_at, status, change_requested_at, change_request_kind, change_request_reason FROM clinical.appointments WHERE client_id=$1 AND status='booked' ORDER BY starts_at`, [id]);
+  return { c, ic: c.ic_at && ['consultation', 'attended'].includes(c.status) ? { when: T.when(c.ic_at), future: c.ic_at > new Date(), asked: !!c.ic_change_requested_at, kind: c.ic_change_kind, reason: c.ic_change_reason } : null,
+    upcoming: appts.filter(a => a.starts_at > new Date()).map(a => ({ id: a.id, when: T.when(a.starts_at), asked: !!a.change_requested_at, kind: a.change_request_kind, reason: a.change_request_reason })),
+    past: appts.filter(a => a.starts_at <= new Date()).reverse().map(a => ({ when: T.when(a.starts_at) })), canAsk: c.status !== 'readonly' };
+}
+router.get('/journal/sessions', myClient, async (req, res) => {
+  const [msg, ok] = CMSG[String(req.query.msg || '')] || [];
+  res.send(V.clientSessionsPage(await sessionsData(req.session.client.id), msg, ok));
+});
+router.post('/journal/sessions', myClient, async (req, res) => {
+  const id = req.session.client.id, b = req.body, withdraw = b.action === 'withdraw';
+  const c = await one(`SELECT * FROM clinical.clients WHERE id=$1`, [id]);
+  if (c.status === 'readonly') return res.redirect('/journal/sessions?msg=gone');
+  const kind = b.kind === 'cancel' ? 'cancel' : 'reschedule', reason = String(b.reason || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 300) || null;
+  let found = false;
+  if (b.target === 'ic') {
+    found = !!(c.ic_at && c.ic_at > new Date() && ['consultation', 'attended'].includes(c.status));
+    if (found) await q(withdraw ? `UPDATE clinical.clients SET ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1` : `UPDATE clinical.clients SET ic_change_requested_at=now(), ic_change_kind=$2, ic_change_reason=$3 WHERE id=$1`, withdraw ? [id] : [id, kind, reason]);
+  } else {
+    const a = await one(`SELECT id FROM clinical.appointments WHERE id=$1 AND client_id=$2 AND status='booked' AND starts_at > now()`, [Number(b.target) || 0, id]);   // only their own, still to come
+    found = !!a;
+    if (a) await q(withdraw ? `UPDATE clinical.appointments SET change_requested_at=NULL, change_request_kind=NULL, change_request_reason=NULL WHERE id=$1` : `UPDATE clinical.appointments SET change_requested_at=now(), change_request_kind=$2, change_request_reason=$3 WHERE id=$1`, withdraw ? [a.id] : [a.id, kind, reason]);
+  }
+  if (!found) return res.redirect('/journal/sessions?msg=gone');
+  await audit(req, withdraw ? 'client.change_withdrawn' : 'client.change_requested', { actorType: 'client', actorId: id, subjectType: 'client', subjectId: id, detail: { target: b.target === 'ic' ? 'consultation' : 'session', kind: withdraw ? null : kind } });
+  if (!withdraw) {
+    try { const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [c.therapist_id]); await mail.sendMail(t.email, 'A client has asked to change an appointment', mail.changeRequestEmail(t.name, `${process.env.BASE_URL}/staff`)); }
+    catch (e) { console.error('[client] change request notice failed:', e.message); }
+  }
+  res.redirect(`/journal/sessions?msg=${withdraw ? 'withdrawn' : 'asked'}`);
+});
+
 module.exports = router;

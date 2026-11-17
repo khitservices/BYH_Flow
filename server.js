@@ -9,6 +9,15 @@ if (process.env.NODE_ENV === 'production' && (process.env.SESSION_SECRET || '').
   process.exit(1);
 }
 
+// Express 4 does not catch rejected promises from async handlers; without this a failed query leaves the request hanging.
+const Layer = require('express/lib/router/layer');
+const origHandle = Layer.prototype.handle_request;
+Layer.prototype.handle_request = function (req, res, next) {
+  try { const r = this.handle.length > 3 ? next() : this.handle(req, res, next); if (r && typeof r.catch === 'function') r.catch(next); }
+  catch (e) { next(e); }
+};
+void origHandle;
+
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind nginx on the same host

@@ -245,3 +245,12 @@
 ## App layout (17 Nov 2026)
 - Signed-in pages use an app shell: a left menu per role (therapist: Home, Schedule, Book a session, Enquiries, Clients, Archive, My account; practice manager: Overview, Team, Statistics, Programmes, Forms, Email, Practice details; client: Home, growing in step 6) with the current page highlighted, name and Sign out at the foot. On a phone the menu becomes a scrolling bar across the top. Public pages (sign-in, enquiry form, signing links) stay narrow and plain.
 - Set once per request (lib/ctx.js, from requireRole), so every page gets the menu without each route passing it. Clients list is now a table with status pills. Other list pages to get the same treatment as they are touched.
+
+## Client requests and duplicates (17 Nov 2026)
+- Client area has **My sessions**: the client sees the consultation and upcoming sessions and can ask to move or cancel any (with an optional note). Nothing changes until the therapist acts; moving/removing clears the request. Therapist is emailed with no personal detail and sees the request on the record, the clients list and the landing page. Only their own, future sessions; read-only clients cannot ask.
+- Duplicate email on an enquiry: the enquiry shows "Already your client" (link to the record, or "same person: close this enquiry") or "Possible duplicate" of another enquiry (remove it), and contact details can always be changed. A client of another therapist is never named; the enquiry just says the address is already registered in the practice.
+- Async errors in routes now reach the error handler instead of hanging the request.
+
+## Backlog captured, not yet designed (17 Nov 2026)
+- **Each therapist sends email from their own account.** Today there is one practice-wide SMTP sender. Needs: per-therapist sender (own address and SMTP/login, or at least own From name and reply-to), practice manager sets up or each therapist configures their own, fallback to the practice sender. Previously parked as "group-practice senders"; now wanted.
+- **Locations / settings managed by the practice manager.** Beyond "in person" and "online": custom settings (e.g. therapist's home, a residency at an osteopath's, a dentist's surgery), each with name and address, assignable to therapists. Sessions and consultations (and the form's "sessions will be" wording and booking emails) should record and show the location.

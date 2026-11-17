@@ -45,8 +45,7 @@ router.get('/therapist', th, async (req, res) => {
       AND c.ic_at < (date_trunc('day', now() AT TIME ZONE $2) + interval '1 day') AT TIME ZONE $2 ORDER BY 1`, [me.id, T.ZONE]);
   const d = await one(`SELECT
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status='active')::int AS active,
-      (SELECT count(DISTINCT c.id) FROM clinical.clients c JOIN clinical.appointments a ON a.client_id=c.id
-         WHERE c.therapist_id=$1 AND c.status <> 'closed' AND a.status='booked' AND a.change_requested_at IS NOT NULL AND a.starts_at > now())::int AS wants_change,
+      (SELECT count(*) FROM clinical.clients c WHERE c.therapist_id=$1 AND c.status <> 'closed' AND (c.ic_change_requested_at IS NOT NULL OR EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.change_requested_at IS NOT NULL AND a.starts_at > now())))::int AS wants_change,
       (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new' AND archived_at IS NULL)::int AS enq_new,
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status IN ('consultation','attended') AND archived_at IS NULL)::int AS consults,
       (SELECT count(*) FROM documents.forms WHERE therapist_id=$1 AND status='sent')::int AS forms_waiting`, [me.id]);
@@ -58,7 +57,7 @@ router.get('/therapist/clients', th, async (req, res) => {
   const rows = await q(`SELECT c.*,
       (SELECT count(*)::int FROM clinical.appointments a WHERE a.client_id=c.id AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()) AS held,
       (SELECT min(a.starts_at) FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at > now()) AS next_at,
-      EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.change_requested_at IS NOT NULL) AS wants_change
+      (c.ic_change_requested_at IS NOT NULL OR EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.starts_at > now() AND a.change_requested_at IS NOT NULL)) AS wants_change
     FROM clinical.clients c WHERE c.therapist_id=$1 AND c.archived_at IS NULL ORDER BY (c.status='closed'), (c.status IN ('active','readonly')), lower(c.name)`, [req.session.staff.id]);
   res.send(V.clients(rows.map(c => ({ ...c, pos: position(c, c.held), next: c.next_at ? T.when(c.next_at) : null, ic_text: c.ic_at ? T.when(c.ic_at) : null }))));
 });
@@ -183,13 +182,17 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     const at = T.fromLocal(req.body.date, req.body.time);
     if (!at) return done('date');
     const moved = !!c.ic_at;
-    const [n] = await q(`UPDATE clinical.clients SET ic_at=$2, ic_sequence=ic_sequence+$3 WHERE id=$1 RETURNING *`, [c.id, at, moved ? 1 : 0]);
+    const [n] = await q(`UPDATE clinical.clients SET ic_at=$2, ic_sequence=ic_sequence+$3, ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1 RETURNING *`, [c.id, at, moved ? 1 : 0]);
     await log('client.consultation_set');
     return done(at > new Date() && await consult.notifyConsultation(n, moved ? 'moved' : 'booked') ? 'ic_set' : 'ic_set_nomail');
   }
+  if (action === 'dismiss_ic_request' && pre) {
+    await q(`UPDATE clinical.clients SET ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1`, [c.id]);
+    return done('saved');
+  }
   if (action === 'clear_ic' && pre) {
     if (c.ic_at && c.ic_at > new Date()) await consult.notifyConsultation({ ...c, ic_sequence: c.ic_sequence + 1 }, 'cancelled');
-    await q(`UPDATE clinical.clients SET ic_at=NULL, ic_sequence=ic_sequence+1 WHERE id=$1`, [c.id]);
+    await q(`UPDATE clinical.clients SET ic_at=NULL, ic_sequence=ic_sequence+1, ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1`, [c.id]);
     await log('client.consultation_cleared'); return done('ic_cleared');
   }
   if (action === 'attended' && pre) {

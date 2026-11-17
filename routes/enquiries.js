@@ -79,7 +79,8 @@ const MSG = {
   booked: ['Consultation booked. They are now in your Clients, and have been emailed the date, a calendar file and an invitation to their client area.', true],
   booked_nomail: ['Consultation booked and they are now in your Clients. Some emails could not be sent: open their record and use Send invitation again once email is working.', true],
   need_email: ['An email address is needed to book a consultation (the parent or guardian\'s, for a child), so they can be invited to their client area. Add one, then book.', false],
-  taken: ['That email address already belongs to a client record in this practice.', false], in_archive: ['That person is in your archive. Restore them from there rather than booking again.', false],
+  taken: ['That email address already belongs to a client record in this practice, so a consultation cannot be booked with it. Use "Change contact details" on the enquiry to give a different email, or ask your practice manager.', false],
+  linked: ['Linked to the existing client record. This enquiry has been closed.', true], merged: ['Duplicate removed. The other enquiry for this person carries on.', true], in_archive: ['That person is in your archive. Restore them from there rather than booking again.', false],
   date: ['Enter a real date and time.', false], deleted: ['Enquiry deleted.', true], archived: ['Archived. If they get in touch again you will be shown the match.', true],
   restored: ['Restored.', true], reactivated: ['Restored from the archive. They are back in Clients at the consultation stage.', true], gone: ['That archived record is no longer available.', false],
 };
@@ -90,7 +91,7 @@ router.get('/therapist/enquiries', th, async (req, res) => {
   const me = req.session.staff, slug = await slugFor(me.id), base = process.env.BASE_URL || '';
   await archive.archiveStale(me.id);
   const rows = await q(`SELECT * FROM clinical.enquiries WHERE therapist_id=$1 AND archived_at IS NULL AND stage='new' ORDER BY created_at DESC`, [me.id]);
-  for (const e of rows) e.matches = await archive.findMatches(me.id, e);
+  for (const e of rows) { e.matches = await archive.findMatches(me.id, e); e.live = await archive.findLive(me.id, e); e.elsewhere = await archive.takenElsewhere(me.id, e.for_child ? (e.email || e.guardian_email) : e.email); }
   const [msg, ok] = MSG[String(req.query.msg || '')] || [];
   res.status(ok === false ? 400 : 200).send(V.therapistEnquiries(rows, { mine: `${base}/enquire/t/${slug}`, practice: `${base}/enquire` }, msg, ok));
 });
@@ -130,7 +131,21 @@ router.post('/therapist/enquiries/:id', th, async (req, res) => {
   if (action === 'delete') { await q(`DELETE FROM clinical.enquiries WHERE id=$1 AND stage <> 'converted'`, [e.id]); await log('enquiry.deleted'); return done('deleted'); }
   if (e.stage === 'converted') return res.redirect(e.converted_client_id ? `/therapist/client/${e.converted_client_id}` : '/therapist/clients');
   if (action === 'notes') { await q(`UPDATE clinical.enquiries SET notes=$2, last_activity_at=now() WHERE id=$1`, [e.id, text(b.notes, 1000) || null]); return done('saved'); }
-  if (action === 'contact') {   // fill in an email (or phone) so a consultation can be booked
+  if (action === 'link_client') {   // the therapist confirms this is a person who is already their client
+    const m = (await archive.findLive(me.id, e)).find(x => x.kind === 'client' && x.id === (Number(b.match) || 0));
+    if (!m) return done('gone');
+    await q(`UPDATE clinical.enquiries SET stage='converted', converted_client_id=$2 WHERE id=$1`, [e.id, m.id]);
+    await log('enquiry.linked_client', { client: m.id });
+    return res.redirect(`/therapist/client/${m.id}?msg=saved`);
+  }
+  if (action === 'merge_enquiry') {   // same person as another enquiry of theirs: keep that one, drop this
+    const m = (await archive.findLive(me.id, e)).find(x => x.kind === 'enquiry' && x.id === (Number(b.match) || 0));
+    if (!m) return done('gone');
+    await q(`DELETE FROM clinical.enquiries WHERE id=$1`, [e.id]);
+    await log('enquiry.merged', { into: m.id });
+    return done('merged');
+  }
+  if (action === 'contact') {   // fill in or change an email (or phone) so a consultation can be booked
     const email = String(b.email || '').trim().toLowerCase().slice(0, 254), phone = text(b.phone, 40);
     if (email && !EMAIL_RE.test(email)) return done('email');
     await q(e.for_child ? `UPDATE clinical.enquiries SET guardian_email=COALESCE($2,guardian_email), guardian_phone=COALESCE($3,guardian_phone), last_activity_at=now() WHERE id=$1`

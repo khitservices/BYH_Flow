@@ -19,7 +19,7 @@ const MENUS = {
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
-    { label: 'Home', href: '/journal', exact: true },
+    { label: 'Home', href: '/journal', exact: true }, { label: 'My sessions', href: '/journal/sessions' },
   ],
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
@@ -203,7 +203,7 @@ function clientRecord(c, msg, ok) {
 <span class="muted">${STATUS[c.status]}${closed ? ` since ${day(c.closed_at)}${c.closed_reason === 'did_not_proceed' ? ' (did not proceed)' : ''}` : c.pos ? ` · session ${c.pos.on} of ${c.pos.of}` : ''}${c.programme_number > 1 ? ` · programme ${c.programme_number}` : ''}</span></p>
 ${note(msg, ok)}
 ${c.archived_at ? sec('Archived', `<p class="muted" style="margin:0">Archived ${day(c.archived_at)}. Kept for your records.</p>${post('restore', '<button class="alt">Restore to consultation stage</button>')}`) : ''}
-${pre ? sec('Initial consultation', `<p class="muted" style="margin:0">${c.ic_text ? esc(c.ic_text) : 'No date set yet.'}</p><details ${c.ic_text ? '' : 'open'}><summary>${c.ic_text ? 'Move or remove' : 'Set the date'}</summary>${post('ic', `<label for="icd">Date</label><input id="icd" name="date" type="date" required value="${esc(c.ic_date)}"><label for="ict">Time</label><input id="ict" name="time" type="time" required value="${esc(c.ic_time)}"><button class="alt">${c.ic_text ? 'Move consultation' : 'Set consultation'}</button>`)}${c.ic_text ? post('clear_ic', '<button class="alt">Remove consultation</button>') : ''}</details>`) : sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
+${pre ? sec('Initial consultation', `<p class="muted" style="margin:0">${c.ic_text ? esc(c.ic_text) : 'No date set yet.'}</p>${c.ic_change_requested_at ? `<p style="margin:6px 0"><strong style="color:#8a4a00">Client asked to ${c.ic_change_kind === 'cancel' ? 'cancel' : 'move'} this${c.ic_change_reason ? `: ${esc(c.ic_change_reason)}` : ''}</strong></p>${post('dismiss_ic_request', '<button class="alt">Dismiss the request</button>')}` : ''}<details ${c.ic_text ? '' : 'open'}><summary>${c.ic_text ? 'Move or remove' : 'Set the date'}</summary>${post('ic', `<label for="icd">Date</label><input id="icd" name="date" type="date" required value="${esc(c.ic_date)}"><label for="ict">Time</label><input id="ict" name="time" type="time" required value="${esc(c.ic_time)}"><button class="alt">${c.ic_text ? 'Move consultation' : 'Set consultation'}</button>`)}${c.ic_text ? post('clear_ic', '<button class="alt">Remove consultation</button>') : ''}</details>`) : sec('Sessions', `<p class="muted" style="margin:0">${c.next ? `Next: ${esc(c.next)}` : 'No session booked.'}</p><p style="margin:6px 0 0"><a href="/therapist/client/${c.id}/sessions">Sessions: book, move or cancel</a></p>`)}
 ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? ` · ${esc(c.phone)}` : ''}<br>${c.invited_at ? `Invited ${day(c.invited_at)}` : 'Not yet invited'}</p>
 <details><summary>Change details</summary>${post('edit', `<label for="name">Name</label><input id="name" name="name" required value="${esc(c.name)}">
 <label for="email">Email</label><input id="email" name="email" type="email" required value="${esc(c.email)}">
@@ -277,8 +277,8 @@ function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
 ${d.pos ? `<section class="card"><h2>Your next session</h2>${d.next ? `<p><strong>${esc(d.next)}</strong></p>` : '<p class="muted">Nothing booked yet.</p>'}
-<p class="muted">${d.blockName ? `${esc(d.blockName)}: ` : ''}session ${d.pos.on} of ${d.pos.of}</p>${(d.blocks || []).length > 1 ? `<p class="muted" style="margin-top:8px">Earlier: ${d.blocks.slice(0, -1).map(b => `${esc(b.name || 'Block ' + b.number)} (${b.sessions} session${b.sessions === 1 ? '' : 's'})`).join(', ')}</p>` : ''}</section>`
- : `<section class="card"><h2>Your initial consultation</h2>${d.ic ? `<p><strong>${esc(d.ic)}</strong></p>` : '<p class="muted">Your therapist will be in touch to arrange it.</p>'}</section>`}
+<p class="muted">${d.blockName ? `${esc(d.blockName)}: ` : ''}session ${d.pos.on} of ${d.pos.of}</p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>${(d.blocks || []).length > 1 ? `<p class="muted" style="margin-top:8px">Earlier: ${d.blocks.slice(0, -1).map(b => `${esc(b.name || 'Block ' + b.number)} (${b.sessions} session${b.sessions === 1 ? '' : 's'})`).join(', ')}</p>` : ''}</section>`
+ : `<section class="card"><h2>Your initial consultation</h2>${d.ic ? `<p><strong>${esc(d.ic)}</strong></p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>` : '<p class="muted">Your therapist will be in touch to arrange it.</p>'}</section>`}
 <section class="card"><h2>Forms</h2>${d.forms.filter(f => f.status !== 'void').length ? formsBlock(d.forms, 'client') : '<p class="muted">You have no forms.</p>'}</section>
 <section class="card"><h2>Your journal</h2><p class="muted">Coming soon: write a little each week and tell us how you are feeling, from 1 to 10.</p></section>
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
@@ -293,6 +293,20 @@ ${a.status === 'booked' ? `<form method="post" action="/therapist/session/${a.id
 <form method="post" action="/therapist/session/${a.id}"><input type="hidden" name="action" value="remove"><input type="hidden" name="return" value="${ret}"><button style="background:#b00020">Remove (entered by mistake)</button></form>
 <p style="margin:6px 0 0"><a href="/therapist/session/${a.id}/calendar.ics">Download for my calendar</a></p></details>`;
 const changeAsk = a => (a.change_requested_at ? `<br><strong style="color:#8a4a00">Client asked to ${a.change_request_kind === 'cancel' ? 'cancel' : 'move'} this${a.change_request_reason ? `: ${esc(a.change_request_reason)}` : ''}</strong>` : '');
+
+function clientSessionsPage(d, msg, ok) {
+  const ask = (target, a) => a.asked
+    ? `<p style="margin:6px 0"><strong style="color:#8a4a00">You asked to ${a.kind === 'cancel' ? 'cancel' : 'move'} this${a.reason ? `: ${esc(a.reason)}` : ''}.</strong> <span class="muted">Your therapist has been told.</span></p>
+<form method="post" action="/journal/sessions"><input type="hidden" name="action" value="withdraw"><input type="hidden" name="target" value="${target}"><button class="alt" style="width:auto">Withdraw my request</button></form>`
+    : d.canAsk ? `<details><summary>Ask to change this</summary><form method="post" action="/journal/sessions"><input type="hidden" name="target" value="${target}">
+<label for="k${target}">What would you like?</label><select id="k${target}" name="kind" ${sel}><option value="reschedule">Move it to another time</option><option value="cancel">Cancel it</option></select>
+<label for="r${target}">Anything your therapist should know (optional)</label><input id="r${target}" name="reason" maxlength="300" placeholder="For example: days or times that suit you"><button class="alt">Send request</button></form>
+<p class="muted">Your therapist will contact you to arrange it. Nothing changes until they do.</p></details>` : '';
+  return wide('My sessions', `<p><strong>My sessions</strong></p><p class="muted">With ${esc(d.c.therapist)}.</p>${note(msg, ok)}
+${d.ic ? `<section class="card" style="margin:12px 0"><h2>Initial consultation</h2><p><strong>${esc(d.ic.when)}</strong></p>${d.ic.future ? ask('ic', d.ic) : ''}</section>` : ''}
+<section class="card" style="margin:12px 0"><h2>Coming up</h2>${d.upcoming.length ? d.upcoming.map(a => `<div style="border-top:1px solid #eee;padding:8px 0"><strong>${esc(a.when)}</strong>${ask(a.id, a)}</div>`).join('') : '<p class="muted">Nothing booked yet. Your therapist will arrange your next session.</p>'}</section>
+${d.past.length ? `<section class="card" style="margin:12px 0"><h2>Past sessions</h2>${d.past.map(a => `<p class="muted">${esc(a.when)}</p>`).join('')}</section>` : ''}`);
+}
 
 function clientSessions(c, appts, msg, ok) {
   const now = Date.now();
@@ -443,10 +457,13 @@ function therapistEnquiries(rows, links, msg, ok) {
 <span class="muted">${esc(CHANNEL[e.channel])} · enquired ${day(e.enquiry_date)}${e.email ? `<br>${esc(e.email)}` : ''}${e.phone ? `<br>${esc(e.phone)}` : ''}${e.address ? `<br>${esc(e.address)}` : ''}${e.for_child ? `<br>Parent or guardian: ${esc(e.guardian_name)}${e.relationship ? ` (${esc(e.relationship)})` : ''}${e.guardian_email ? `<br>${esc(e.guardian_email)}` : ''}${e.guardian_phone ? `<br>${esc(e.guardian_phone)}` : ''}` : ''}${e.notes ? `<br>Notes: ${esc(e.notes)}` : ''}</span></p>
 ${(e.matches || []).map(m => `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Matches an archived ${m.kind === 'client' ? 'client' : 'enquiry'}:</strong> ${esc(m.name)}<br><span class="muted">Archived ${day(m.archived_at)} (${esc(m.reason)}). Check it is the same person.</span></p>
 ${post(e.id, 'restore_match', `<input type="hidden" name="kind" value="${m.kind}"><input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: restore their record</button>`)}</div>`).join('')}
+${(e.live || []).map(m => m.kind === 'client' ? `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Already your client:</strong> ${esc(m.name)} <span class="muted">(${esc(STATUS[m.status])})</span></p><p style="margin:4px 0"><a href="/therapist/client/${m.id}">Open their record</a></p>${post(e.id, 'link_client', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: close this enquiry and use their record</button>`)}</div>` : `<div style="background:#fff7e6;border:1px solid #e8c77a;border-radius:6px;padding:8px 12px;margin:8px 0"><p style="margin:0"><strong>Possible duplicate:</strong> another enquiry from ${esc(m.name)} has the same contact details.</p>${post(e.id, 'merge_enquiry', `<input type="hidden" name="match" value="${m.id}"><button class="alt">Same person: remove this duplicate</button>`)}</div>`).join('')}
+${e.elsewhere ? '<p style="margin:6px 0;color:#8a4a00">That email address is already registered to a client in this practice, so a consultation cannot be booked with it. Give a different email below, or ask your practice manager.</p>' : ''}
 ${mail ? '' : `<p class="muted" style="margin:6px 0">No email address yet. One is needed to book a consultation, so they can be invited to their client area.</p>${post(e.id, 'contact', `<label for="ce${e.id}">${e.for_child ? "Parent or guardian's email" : 'Email'}</label><input id="ce${e.id}" name="email" type="email"><button class="alt">Save email</button>`)}`}
 ${mail ? `<details open><summary>Book the initial consultation</summary>${post(e.id, 'consult', `<label for="d${e.id}">Date</label><input id="d${e.id}" name="date" type="date" required><label for="t${e.id}">Time</label><input id="t${e.id}" name="time" type="time" required value="10:00"><button>Book consultation</button>`)}
 <p class="muted">Booking it moves them to your Clients as "Consultation booked", emails them the date with a calendar file, and invites them to their client area.</p></details>` : ''}
-<details><summary>Manage</summary>
+<details ${e.elsewhere ? 'open' : ''}><summary>Manage</summary>
+${post(e.id, 'contact', `<label for="me${e.id}">${e.for_child ? "Parent or guardian's email" : 'Email'}</label><input id="me${e.id}" name="email" type="email" value="${esc(mail)}"><label for="mp${e.id}">Phone</label><input id="mp${e.id}" name="phone" type="tel" value="${esc(e.for_child ? e.guardian_phone : e.phone)}"><button class="alt">Change contact details</button>`)}
 ${post(e.id, 'notes', `<label for="nt${e.id}">Notes</label><input id="nt${e.id}" name="notes" maxlength="1000" value="${esc(e.notes)}"><button class="alt">Save notes</button>`)}
 ${post(e.id, 'archive', '<button class="alt">Archive (not going ahead)</button>')}
 ${post(e.id, 'delete', '<button style="background:#b00020">Delete enquiry</button>')}</details></section>`;
@@ -577,4 +594,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
