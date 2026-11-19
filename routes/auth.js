@@ -369,8 +369,7 @@ router.post('/journal/account', myClient, async (req, res) => {
   const note = String(req.body.note || '').replace(/[\r\t]/g, ' ').trim().slice(0, 500) || null;
   await q(`INSERT INTO clinical.data_requests (client_id, kind, note) VALUES ($1,$2,$3)`, [id, kind, note]);
   await audit(req, 'client.data_request', { actorType: 'client', actorId: id, subjectType: 'client', subjectId: id, detail: { kind } });
-  try { const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [c.therapist_id]); await mail.sendMail(t.email, 'A client has made a request', mail.dataRequestEmail(t.name, `${process.env.BASE_URL}/staff`)); }
-  catch (e) { console.error('[client] data request notice failed:', e.message); }
+  await require('../lib/notify').queueNotice(c.therapist_id, 'data');
   res.redirect(`/journal/account?msg=${kind}`);
 });
 router.get('/journal/help', myClient, async (req, res) => {
@@ -398,8 +397,7 @@ router.post('/journal/sessions', myClient, async (req, res) => {
   if (!found) return res.redirect('/journal/sessions?msg=gone');
   await audit(req, withdraw ? 'client.change_withdrawn' : 'client.change_requested', { actorType: 'client', actorId: id, subjectType: 'client', subjectId: id, detail: { target: b.target === 'ic' ? 'consultation' : 'session', kind: withdraw ? null : kind } });
   if (!withdraw) {
-    try { const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [c.therapist_id]); await mail.sendMail(t.email, 'A client has asked to change an appointment', mail.changeRequestEmail(t.name, `${process.env.BASE_URL}/staff`)); }
-    catch (e) { console.error('[client] change request notice failed:', e.message); }
+    await require('../lib/notify').queueNotice(c.therapist_id, 'change');
   }
   res.redirect(`/journal/sessions?msg=${withdraw ? 'withdrawn' : 'asked'}`);
 });

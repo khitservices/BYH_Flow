@@ -695,3 +695,23 @@ test('a new website enquiry still reaches the therapist if the mail server was d
   await q(`INSERT INTO clinical.enquiries (therapist_id, channel, for_child, name, phone) VALUES ($1,'phone',false,'Typed In','070')`, [t.id]);
   const before = count(); await notify.retryPending(); assert.equal(count(), before);
 });
+
+test('client request emails to the therapist are retried; sessions per location are counted', { skip }, async () => {
+  const notify = require('../lib/notify');
+  const t = await addStaff('Thera Notice', 'therapist'), ct = await staffIn(t.email, '10.87.1.1'), p = await addStaff('Mgr Notice', 'practice_manager'), cp = await staffIn(p.email, '10.87.1.2');
+  await add(ct, { name: 'Notice Client', email: em('noticec') }); const cl = await clientIn(em('noticec'));
+  const count = re => mail.outbox.filter(x => x.to === t.email && re.test(x.subject)).length;
+  mail.testHooks.failNext = true;
+  assert.equal((await cl.post('/journal/account', { kind: 'copy' })).loc, '/journal/account?msg=copy');          // the client still sees success
+  assert.equal(count(/request/), 0);
+  const nt = (await q(`SELECT id, sent_at, attempts FROM core.notices WHERE therapist_id=$1`, [t.id]))[0]; assert.equal(nt.sent_at, null); assert.equal(nt.attempts, 1);
+  await q(`UPDATE core.notices SET created_at = now() - interval '5 minutes' WHERE id=$1`, [nt.id]);
+  assert.ok(await notify.retryPending() >= 1); assert.equal(count(/request/), 1);
+  assert.equal(await notify.retryPending(), 0); assert.equal(count(/request/), 1);
+  // sessions per location
+  const loc = (await q(`SELECT id FROM core.locations WHERE kind='online'`))[0].id, id = await idOf(em('noticec'));
+  await ct.post('/therapist/book', { client_id: id, date: '2027-09-06', time: '10:00', location: String(loc) });
+  await ct.post('/therapist/book', { client_id: id, date: '2027-09-13', time: '10:00', location: 'none' });
+  const mine = (await ct.get('/therapist/stats')).text; assert.match(mine, /Where sessions happen/); assert.match(mine, /Online \(video call\)/); assert.match(mine, /No place set/);
+  assert.match((await cp.get('/practice/stats')).text, /Where sessions happen/);
+});
