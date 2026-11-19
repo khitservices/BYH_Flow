@@ -48,13 +48,15 @@ router.get('/therapist', th, async (req, res) => {
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status='active')::int AS active,
       (SELECT count(*) FROM clinical.clients c WHERE c.therapist_id=$1 AND c.status <> 'closed' AND (c.ic_change_requested_at IS NOT NULL OR EXISTS (SELECT 1 FROM clinical.appointments a WHERE a.client_id=c.id AND a.status='booked' AND a.change_requested_at IS NOT NULL AND a.starts_at > now())))::int AS wants_change,
       (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new' AND archived_at IS NULL)::int AS enq_new,
+      (SELECT count(*) FROM clinical.clients c WHERE c.therapist_id=$1 AND c.status='active' AND c.programme_sessions > 1 AND c.sessions_before_app
+         + (SELECT count(*) FROM clinical.appointments a WHERE a.client_id=c.id AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()) + 1 >= c.programme_sessions - 1)::int AS ending,
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status IN ('consultation','attended') AND archived_at IS NULL)::int AS consults,
       (SELECT count(*) FROM documents.forms WHERE therapist_id=$1 AND status='sent')::int AS forms_waiting`, [me.id]);
   const signed = await q(`SELECT f.id, f.client_id, f.rendered->>'title' AS title, f.signed_at, COALESCE(c.name, e.name) AS name FROM documents.forms f
       LEFT JOIN clinical.clients c ON c.id=f.client_id LEFT JOIN clinical.enquiries e ON e.id=f.enquiry_id
     WHERE f.therapist_id=$1 AND f.status='signed' AND f.therapist_seen_at IS NULL AND f.signed_at > now() - interval '30 days' ORDER BY f.signed_at DESC LIMIT 20`, [me.id]);
   res.send(V.therapistHome({ signed: signed.map(f => ({ ...f, when: T.when(f.signed_at) })), who: me.name, today: today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })),
-    clients: { active: d.active, wants_change: d.wants_change, consultations: d.consults }, enquiries: { new: d.enq_new }, forms_waiting: d.forms_waiting }));
+    clients: { ending: d.ending, active: d.active, wants_change: d.wants_change, consultations: d.consults }, enquiries: { new: d.enq_new }, forms_waiting: d.forms_waiting }));
 });
 
 router.get('/therapist/clients', th, async (req, res) => {

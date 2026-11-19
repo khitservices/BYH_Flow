@@ -207,3 +207,13 @@ test('schedule and calendar link include initial consultations', { skip }, async
   assert.match(feed, /SUMMARY:Consultation: Cons W\./); assert.ok(!/Cons A\.|Cons P\./.test(feed));
   assert.match(feed, new RegExp('UID:' + require('../lib/ics').uid(w, 'consultation').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));   // same identity as the emailed invitation
 });
+
+test('ending soon: flagged in the last two sessions of a block, shown on the client list and home page', { skip }, async () => {
+  const t = await addStaff('Thera Ending', 'therapist'), ct = await staffIn(t.email, '10.92.1.1');
+  const mk = async (n, sessions, before) => ct.post('/therapist/clients/add', { name: 'End ' + n, email: em('end' + n), programme: await progId(sessions), sessions_before_app: String(before), reminder_dow: '3' });
+  await mk('late', 6, 4); await mk('last', 6, 5); await mk('early', 8, 0); await mk('mid', 6, 3);
+  const list = (await ct.get('/therapist/clients')).text, row = n => list.slice(list.indexOf('End ' + n), list.indexOf('</tr>', list.indexOf('End ' + n)));
+  assert.match(row('late'), /Session 5 of 6[^<]*<strong[^>]*>ending soon/); assert.match(row('last'), /Session 6 of 6[^<]*<strong[^>]*>ending soon/);
+  assert.ok(!/ending soon/.test(row('early'))); assert.ok(!/ending soon/.test(row('mid')));
+  assert.match((await ct.get('/therapist')).text, /2 are in the last two sessions/);
+});
