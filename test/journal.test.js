@@ -20,6 +20,8 @@ test.before(async () => {
 });
 test.after(async () => {
   if (skip) return;
+  await q(`DELETE FROM documents.forms WHERE therapist_id IN (SELECT id FROM core.staff WHERE email LIKE '%.${run}@example.test')`);
+  await q(`DELETE FROM clinical.enquiries WHERE therapist_id IN (SELECT id FROM core.staff WHERE email LIKE '%.${run}@example.test')`);
   await q(`DELETE FROM clinical.clients WHERE email LIKE '%.${run}@example.test'`);
   await q(`DELETE FROM core.staff WHERE email LIKE '%.${run}@example.test'`);
   server.close(); await require('../lib/db').pool.end();
@@ -125,4 +127,60 @@ test('journal: private to the client, files checked and encrypted, edit window, 
   const home = (await jo.get('/journal')).text; assert.match(home, /id="installcard"/); assert.match(home, /client\.webmanifest/);
   const man = JSON.parse((await client().get('/app/client.webmanifest')).text); assert.equal(man.start_url, '/journal');
   assert.notEqual((await ct.get('/journal/support')).status, 200);     // clients only
+});
+
+test('retention: periods worked out, journal deleted on request, records deleted when their time is up, never early', { skip }, async () => {
+  const R = require('../lib/retention'), journal = require('../lib/journal'), storage = require('../lib/storage'), fs = require('node:fs'), path = require('node:path');
+  const on = (id) => path.join(process.env.STORAGE_DIR, id.slice(0, 2), id);
+  const D = s => new Date(s + 'T12:00:00Z'), day = d => d && d.toISOString().slice(0, 10);
+  // the rules, as pure functions
+  assert.equal(day(R.keepUntil({ under16: false }, D('2020-01-10'))), '2027-01-10');                                           // adult: 7 years
+  assert.equal(R.keepUntil({ under16: true }, D('2022-03-01')), null);                                                         // child, no date of birth: cannot be worked out
+  assert.equal(day(R.keepUntil({ under16: true, date_of_birth: '2015-06-01' }, D('2022-03-01'))), '2040-06-01');                // 6 at last contact: 25th birthday
+  assert.equal(day(R.keepUntil({ under16: false, date_of_birth: '2005-01-01' }, D('2022-06-01'))), '2031-01-01');               // 17 at last contact: 26th birthday
+  assert.equal(day(R.keepUntil({ under16: false, date_of_birth: '2000-01-01' }, D('2022-06-01'))), '2029-06-01');               // adult when they finished: 7 years
+  assert.equal(day(R.keepUntil({ under16: true, date_of_birth: '2020-01-01' }, D('2012-01-01'))), '2045-01-01');                // (guard: later of the two rules)
+
+  const t = await addStaff('Thera Retain', 'therapist'), ct = await staffIn(t.email, '10.89.1.1');
+  const mk = async (n, extra = '') => { await add(ct, { name: 'Ret ' + n, email: em(n) }); const id = await idOf(em(n)); if (extra) await q(`UPDATE clinical.clients SET ${extra} WHERE id=$1`, [id]); return id; };
+  // journal goes straight away on a deletion request, but only once confirmed; the clinical record stays
+  const a = await mk('askdel'); const ca = await clientIn(em('askdel'), '10.89.2.1'); assert.ok(ca);
+  await ca.upload('/journal/entries', { body: 'private words' }, { data: PNG, type: 'image/png', name: 'p.png' });
+  const fid = (await q(`SELECT file_object_id AS f FROM clinical.journal_entries WHERE client_id=$1`, [a]))[0].f; assert.ok(fs.existsSync(on(fid)));
+  assert.equal((await ca.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=confirm');
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.journal_entries WHERE client_id=$1`, [a]))[0].n, 1);             // not confirmed: nothing deleted
+  assert.equal((await ca.post('/journal/account', { kind: 'delete', confirm: 'on' })).loc, '/journal/account?msg=delete');
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.journal_entries WHERE client_id=$1`, [a]))[0].n, 0); assert.ok(!fs.existsSync(on(fid)), 'file removed from the store');
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.clients WHERE id=$1`, [a]))[0].n, 1);                              // the clinical record is still there
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.data_requests WHERE client_id=$1 AND kind='delete'`, [a]))[0].n, 1);
+
+  // records whose time is up are deleted completely; others are not touched
+  const old = "status='closed', closed_at=now() - interval '8 years', created_at=now() - interval '9 years'";
+  const due = await mk('due', old), held = await mk('held', old), young = await mk('young', "status='closed', closed_at=now() - interval '2 years'"), act = await mk('act', "created_at=now() - interval '9 years'");
+  const kid = await mk('kid', old + ", under16=true, consent_status='granted'"), kidDob = await mk('kiddob', old + ", under16=true, consent_status='granted', date_of_birth=(now() - interval '14 years')::date");
+  const arch = await mk('arch', old + ", archived_at=now()");
+  await q(`UPDATE clinical.clients SET retention_hold=true, retention_hold_note='complaint' WHERE id=$1`, [held]);
+  const pdf = await storage.put(Buffer.from('signed pdf')), jf = await storage.put(Buffer.from('journal file'));
+  const enq = (await q(`INSERT INTO clinical.enquiries (therapist_id, channel, name, email, stage, converted_client_id) VALUES ($1,'website','Ret due',$2,'converted',$3) RETURNING id`, [t.id, em('due'), due]))[0].id;
+  await q(`INSERT INTO documents.forms (therapist_id, client_id, enquiry_id, template_name, audience, rendered, content_sha256, status, file_id) VALUES ($1,$2,$3,'Agreement','adult','{}','x','signed',$4)`, [t.id, due, enq, pdf]);
+  await q(`INSERT INTO clinical.journal_entries (client_id, block_id, body, file_object_id) VALUES ($1, NULL, 'x', $2)`, [due, jf]);
+  await q(`INSERT INTO clinical.weekly_scores (client_id, week_start, score) VALUES ($1, current_date, 5)`, [due]);
+  const n = await R.run(); assert.ok(n >= 1);
+  const gone = async id => (await q(`SELECT count(*)::int n FROM clinical.clients WHERE id=$1`, [id]))[0].n === 0;
+  assert.ok(await gone(due), 'record past its period is deleted');
+  for (const [id, why] of [[held, 'on hold'], [young, 'not yet due'], [act, 'active client'], [kid, 'child without a date of birth'], [kidDob, 'child, due at 25'], [arch, 'archived']]) assert.ok(!(await gone(id)), why + ' is kept');
+  assert.equal((await q(`SELECT count(*)::int n FROM documents.forms WHERE client_id=$1 OR enquiry_id=$2`, [due, enq]))[0].n, 0);
+  assert.equal((await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE id=$1`, [enq]))[0].n, 0);
+  assert.ok(!fs.existsSync(on(pdf)) && !fs.existsSync(on(jf)), 'signed PDF and journal file removed from the store');
+  const au = (await q(`SELECT detail FROM core.audit_log WHERE action='client.record_deleted' AND subject_id=$1`, [due]))[0]; assert.ok(au); assert.ok(!/Ret due|example\.test/.test(JSON.stringify(au.detail)));   // a record that it happened, with no personal details
+  assert.equal(await R.run(), 0);                                                                                                // nothing left to do
+
+  // therapist screens: retention date shown, date of birth needed for a child, hold needs a reason
+  assert.match((await ct.get(`/therapist/client/${kid}`)).text, /date of birth is needed/i);
+  assert.match((await ct.get(`/therapist/client/${kidDob}`)).text, /then deleted automatically/);
+  assert.equal((await ct.post(`/therapist/client/${act}`, { action: 'retention_hold', hold: 'on', hold_note: '' })).loc, `/therapist/client/${act}?msg=hold_why`);
+  assert.equal((await ct.post(`/therapist/client/${act}`, { action: 'edit', name: 'Ret act', email: em('act'), date_of_birth: '2030-01-01' })).loc, `/therapist/client/${act}?msg=dob`);
+  assert.equal((await ct.post(`/therapist/client/${act}`, { action: 'edit', name: 'Ret act', email: em('act'), date_of_birth: '1990-05-04' })).loc, `/therapist/client/${act}?msg=saved`);
+  assert.equal(R.dateOnly((await q(`SELECT date_of_birth AS d FROM clinical.clients WHERE id=$1`, [act]))[0].d), '1990-05-04');
+  assert.match((await ct.get(`/therapist/client/${act}`)).text, /value="1990-05-04"/);                                     // shown back as entered, whatever the server's time zone
 });

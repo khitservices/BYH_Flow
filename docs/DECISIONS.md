@@ -340,8 +340,18 @@
 - **Grouping:** entries sit under the next booked session after they were written ("Leading up to your session on ..."), or "After your last booked session". Entries belong to the block of sessions current when written; earlier blocks are readable but not editable (Look back at earlier blocks).
 - **Who can add:** active clients. Read-only clients can read, not add or edit.
 - Migration 030 (clinical.journal_entries). Client menu gains "My journal"; the client home gets a card.
-- Not yet: weekly reminder wording does not mention the journal; deleting a client's journal files from the store when their information is deleted (deletion is manual for now, so files would remain in the store until that is built: add to the deletion work); search; therapist "ending soon" flags.
+- Not yet: weekly reminder wording does not mention the journal; search; therapist "ending soon" flags.
 - **Weekly reminder wording (Kev, 19 Nov):** the email now asks for both the score and a journal entry, with two buttons ("Give my score", "Write in my journal"). When it is sent is unchanged (only if no score yet that week).
 - **Support page** (client menu): tap-to-call cards for 999, Samaritans 116 123, Shout (text 85258), NHS 111, and Childline 0800 1111 for clients marked under 16 (as in BYH). Says plainly that the page is not watched by the therapist or practice.
 - **Relax page** (client menu): plays the therapist's recording link, or says none has been added yet.
 - **Install on phone:** the client area can now be added to a phone's home screen (own manifest, opens at the client home). Android/desktop Chrome get a button on the home page; iPhone/iPad get the Share steps. Nothing is cached on the phone.
+
+## Keeping and deleting records (Kev's answers, 19 Nov 2026; migration 031)
+- **Adults:** the clinical record is kept 7 years after last contact, then deleted automatically. 7 is the figure in the UK counselling and therapy guidance found (Human Givens Institute: 7 years after therapy ends; IACP: 7 years after last service). **To confirm with Katrina:** her insurer or professional body may require longer.
+- **Under-18s:** the longer of 7 years after last contact and their 25th birthday (26th if 17 at last contact), as IACP. Needs an optional **date of birth**, asked in the under-16 box when adding a client and under Change details. A child with no date of birth is never deleted automatically; the record says the date of birth is needed.
+- **What "the record" covers:** their details, sessions, signed forms and the PDFs, weekly scores, and the enquiry they came from. Removed completely, including the encrypted files. The audit log keeps only that a deletion happened (no names).
+- **Last contact** = latest past session or consultation, or when the record was closed, whichever is latest. Only **closed** clients are deleted: never active or read-only clients, and not people archived as "did not proceed".
+- **Hold:** the therapist can switch automatic deletion off for a client, with a reason (a complaint or legal matter is possible), on the client record.
+- **Client asks for deletion:** their **journal is deleted straight away** (rows and files, after they tick to confirm); the request still goes to the therapist, who explains that the clinical record is kept until its date and then deleted automatically. The client is told this on the page.
+- Runs with the hourly background sweep (first run 2 minutes after start).
+- **Not covered yet:** people archived as "did not proceed" and unconverted enquiries (the earlier template guidance suggested 1 year; Kev to decide); read-only clients are never deleted until the therapist closes them; backups (deleted data remains in server backups until they roll off: say so in the privacy notice); no email to the therapist when a record is deleted.

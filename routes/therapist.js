@@ -33,6 +33,7 @@ const position = (c, held = 0) => !c.programme_sessions ? null : ({ on: Math.min
 const heldCount = async id => (await one(`SELECT count(*)::int n FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id WHERE a.client_id=$1 AND a.block_id IS NOT DISTINCT FROM c.current_block_id AND a.status='booked' AND a.starts_at <= now()`, [id])).n;
 
 // "AND therapist_id" is the access rule: someone else's client is simply not found.
+const dobOf = v => { const t = String(v || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null; const d = new Date(t + 'T00:00:00Z'); return isNaN(d) || d > new Date() || d.getUTCFullYear() < 1900 || d.toISOString().slice(0, 10) !== t ? null : t; };
 const own = (req) => one(`SELECT * FROM clinical.clients WHERE id=$1 AND therapist_id=$2`, [Number(req.params.id) || 0, req.session.staff.id]);
 
 router.get('/therapist', th, async (req, res) => {
@@ -81,7 +82,7 @@ router.post('/therapist/clients/add', th, async (req, res) => {
     name: text(b.name), email: norm(b.email), phone: text(b.phone, 40), under16: b.under16 === 'on',
     reminder_dow: dow(b.reminder_dow), programme: Number(b.programme) || null,
     guardian_name: text(b.guardian_name), guardian_email: norm(b.guardian_email), guardian_phone: text(b.guardian_phone, 40),
-    consent_note: text(b.consent_note, 500), consent_date: text(b.consent_date, 10),
+    consent_note: text(b.consent_note, 500), consent_date: text(b.consent_date, 10), date_of_birth: dobOf(b.date_of_birth),
   };
   const prog = await one(`SELECT * FROM core.programmes WHERE id=$1 AND active`, [f.programme || 0]);
   f.sessions = prog ? prog.sessions : 1;
@@ -110,11 +111,11 @@ router.post('/therapist/clients/add', th, async (req, res) => {
   const [client] = await q(
     `INSERT INTO clinical.clients (therapist_id, name, email, phone, under16, guardian_name, guardian_email, guardian_phone,
        consent_status, consent_at, consent_method, consent_note, consent_recorded_by, programme_sessions, sessions_before_app, reminder_dow,
-       programme_id, programme_name, programme_price_pence, reminders_on)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
+       programme_id, programme_name, programme_price_pence, reminders_on, date_of_birth)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
     [me.id, f.name, f.email, f.phone || null, f.under16, f.under16 ? f.guardian_name : null, f.under16 ? f.guardian_email || null : null,
      f.under16 ? f.guardian_phone || null : null, consent.status, consent.at, consent.method, consent.note, consent.by,
-     f.sessions, f.sessions_before_app, f.reminder_dow, prog.id, prog.name, prog.price_pence, f.sessions > 1]); // one-off sessions start with weekly reminders off
+     f.sessions, f.sessions_before_app, f.reminder_dow, prog.id, prog.name, prog.price_pence, f.sessions > 1, f.date_of_birth]); // one-off sessions start with weekly reminders off
   await blocks.startBlock(client.id, prog, f.sessions_before_app);
   const who = { actorType: 'staff', actorId: me.id, subjectType: 'client', subjectId: client.id };
   await audit(req, 'client.created', { ...who, detail: { under16: f.under16 } });
@@ -148,6 +149,7 @@ const MSG = {
   archived: ['Archived as did not proceed. You can restore them from the archive if they get in touch again.', true], restored: ['Restored. They are back at the consultation stage.', true],
   block_started: ['New block started. Their earlier blocks are kept, and sessions you book now count against this one.', true],
   block_open: ['The current block still has sessions to come. Tick "end it early" to start a new block now.', false],
+  dob: ['Enter a real date of birth, or leave it empty.', false], hold_why: ['Say briefly why the record is being kept (for example a complaint).', false],
   unknown: ['Unknown action.', false],
 };
 
@@ -158,7 +160,7 @@ router.get('/therapist/client/:id', th, async (req, res) => {
   const m = MSG[String(req.query.msg || '')];
   const gapDays = c.closed_at ? (Date.now() - new Date(c.closed_at).getTime()) / 86400000 : 0;
   const next = await one(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' AND starts_at > now() ORDER BY starts_at LIMIT 1`, [c.id]);
-  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), blocks: await blocks.blocksFor(c.id), scores: await require('../lib/scores').series(c.id), journal: await require('../lib/journal').counts(c.id), data_requests: (await q(`SELECT id, kind, note, created_at FROM clinical.data_requests WHERE client_id=$1 AND handled_at IS NULL ORDER BY id`, [c.id])).map(r => ({ ...r, when: T.when(r.created_at) })), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
+  res.status(m && m[1] === false ? 400 : 200).send(V.clientRecord({ ...c, ic_text: c.ic_at ? T.when(c.ic_at) : null, ic_date: c.ic_at ? T.inputDate(c.ic_at) : '', ic_time: c.ic_at ? T.timeShort(c.ic_at) : '10:00', pos: position(c, await heldCount(c.id)), next: next ? T.when(next.starts_at) : null, freshOnReopen: c.status === 'closed' && gapDays > RESUME_DAYS, programmes: await activeProgrammes(), blocks: await blocks.blocksFor(c.id), scores: await require('../lib/scores').series(c.id), journal: await require('../lib/journal').counts(c.id), retention: await require('../lib/retention').status(c), data_requests: (await q(`SELECT id, kind, note, created_at FROM clinical.data_requests WHERE client_id=$1 AND handled_at IS NULL ORDER BY id`, [c.id])).map(r => ({ ...r, when: T.when(r.created_at) })), forms: await q(`SELECT id, template_name, audience, status, sent_at, signed_at FROM documents.forms WHERE client_id=$1 AND therapist_id=$2 ORDER BY id`, [c.id, me.id]), templates: (await activeTemplates()).filter(t => t.audience === (c.under16 ? 'child' : 'adult')), fee_pence: (await one(`SELECT default_fee_pence FROM core.staff WHERE id=$1`, [me.id])).default_fee_pence }, m && m[0], m ? m[1] : undefined));
 });
 
 router.post('/therapist/client/:id', th, async (req, res) => {
@@ -185,6 +187,13 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     const [n] = await q(`UPDATE clinical.clients SET ic_at=$2, ic_sequence=ic_sequence+$3, ic_change_requested_at=NULL, ic_change_kind=NULL, ic_change_reason=NULL WHERE id=$1 RETURNING *`, [c.id, at, moved ? 1 : 0]);
     await log('client.consultation_set');
     return done(at > new Date() && await consult.notifyConsultation(n, moved ? 'moved' : 'booked') ? 'ic_set' : 'ic_set_nomail');
+  }
+  if (action === 'retention_hold') {
+    const on = req.body.hold === 'on', why = text(req.body.hold_note, 300);
+    if (on && !why) return done('hold_why');
+    await q(`UPDATE clinical.clients SET retention_hold=$2, retention_hold_note=$3 WHERE id=$1`, [c.id, on, on ? why : null]);
+    await log(on ? 'client.retention_hold_on' : 'client.retention_hold_off');
+    return done('saved');
   }
   if (action === 'data_done') {
     await q(`UPDATE clinical.data_requests SET handled_at=now(), handled_note=$3 WHERE id=$1 AND client_id=$2 AND handled_at IS NULL`, [Number(req.body.id) || 0, c.id, String(req.body.note || '').trim().slice(0, 300) || null]);
@@ -249,7 +258,9 @@ router.post('/therapist/client/:id', th, async (req, res) => {
     if (!name || !EMAIL_RE.test(email)) return done('details');
     if (await one(`SELECT 1 FROM clinical.clients WHERE lower(email)=$1 AND id<>$2`, [email, c.id])) return done('taken');
     const emailChanged = email !== c.email.toLowerCase();
-    await q(`UPDATE clinical.clients SET name=$2, email=$3, phone=$4 WHERE id=$1`, [c.id, name, email, phone || null]);
+    const dobRaw = String(req.body.date_of_birth || '').trim(), dob = dobOf(dobRaw);
+    if (dobRaw && !dob) return done('dob');
+    await q(`UPDATE clinical.clients SET name=$2, email=$3, phone=$4, date_of_birth=$5 WHERE id=$1`, [c.id, name, email, phone || null, dob]);
     if (emailChanged) await endSessions(); // a new address must prove itself with a fresh sign-in
     await log('client.edited', { email_changed: emailChanged });
     return done('saved');

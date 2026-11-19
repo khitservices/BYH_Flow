@@ -666,8 +666,8 @@ test('client account and help pages: requests about their information reach only
   const acct = (await cl.get('/journal/account')).text; assert.match(acct, /Data Client/); assert.match(acct, /Ask for a copy/); assert.match((await cl.get('/journal')).text, /My account/);
   assert.match((await cl.get('/journal/help')).text, /999/);
   const n = mail.outbox.length;
-  assert.equal((await cl.post('/journal/account', { kind: 'delete', note: 'Please remove everything' })).loc, '/journal/account?msg=delete');
-  assert.equal((await cl.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=already');                // one open request per kind
+  assert.equal((await cl.post('/journal/account', { kind: 'delete', confirm: 'on', note: 'Please remove everything' })).loc, '/journal/account?msg=delete');
+  assert.equal((await cl.post('/journal/account', { kind: 'delete', confirm: 'on' })).loc, '/journal/account?msg=already');                // one open request per kind
   assert.equal((await cl.post('/journal/account', { kind: 'bogus' })).loc, '/journal/account?msg=gone');
   const note = mail.outbox.slice(n).filter(x => x.to === a.email && /request/i.test(x.subject)); assert.equal(note.length, 1);
   assert.ok(!/Data Client|Please remove|delete/i.test(note[0].html.replace(/Sign in/g, '')));                                   // nothing personal in the email
@@ -679,7 +679,7 @@ test('client account and help pages: requests about their information reach only
   assert.ok((await q(`SELECT handled_at FROM clinical.data_requests WHERE id=$1`, [rid]))[0].handled_at);
   assert.match((await cl.get('/journal/account')).text, /dealt with/);
   assert.ok(!(await ca.get(`/therapist/client/${id}`)).text.includes('Asked for their information to be deleted'));          // no longer open
-  assert.equal((await cl.post('/journal/account', { kind: 'delete' })).loc, '/journal/account?msg=delete');                 // can ask again once dealt with
+  assert.equal((await cl.post('/journal/account', { kind: 'delete', confirm: 'on' })).loc, '/journal/account?msg=delete');                 // can ask again once dealt with
   assert.equal((await client().get('/journal/account')).status, 302);                                                          // not signed in
 });
 

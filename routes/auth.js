@@ -409,7 +409,7 @@ router.get('/journal/relax', myClient, async (req, res) => {
   res.send(V.clientRelaxPage({ who: c.name, therapist: c.therapist, url: c.relax_url }));
 });
 // ---- client: account, requests about their information, help ----
-const DMSG = { copy: ['Your request for a copy of your information has been passed to your therapist.', true], delete: ['Your request to delete your information has been passed to your therapist.', true],
+const DMSG = { copy: ['Your request for a copy of your information has been passed to your therapist.', true], delete: ['Your journal has been deleted. Your request has been passed to your therapist, who will explain what else is kept and for how long.', true], confirm: ['Tick the box to confirm. Your journal cannot be brought back once it is deleted.', false],
   already: ['You already have that request open. Your therapist has it.', false], limited: ['Too many requests. Please try again later.', false], gone: ['That is not available.', false] };
 const myAccount = async id => {
   const c = await one(`SELECT c.name, c.email, c.under16, c.guardian_email, c.status, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
@@ -424,6 +424,12 @@ router.post('/journal/account', myClient, async (req, res) => {
   if (!kind) return res.redirect('/journal/account?msg=gone');
   if (require('../lib/ratelimit').limited(`datareq|${id}`, 5, 24 * 3600000)) return res.redirect('/journal/account?msg=limited');
   const c = await one(`SELECT therapist_id FROM clinical.clients WHERE id=$1`, [id]);
+  // Their journal is theirs alone: it goes straight away, once they have confirmed. The clinical record is kept for its retention period (lib/retention.js).
+  if (kind === 'delete') {
+    if (req.body.confirm !== 'on') return res.redirect('/journal/account?msg=confirm');
+    await journal.wipe(id);
+    await audit(req, 'client.journal_deleted', { actorType: 'client', actorId: id, subjectType: 'client', subjectId: id });
+  }
   if (await one(`SELECT 1 FROM clinical.data_requests WHERE client_id=$1 AND kind=$2 AND handled_at IS NULL`, [id, kind])) return res.redirect('/journal/account?msg=already');
   const note = String(req.body.note || '').replace(/[\r\t]/g, ' ').trim().slice(0, 500) || null;
   await q(`INSERT INTO clinical.data_requests (client_id, kind, note) VALUES ($1,$2,$3)`, [id, kind, note]);

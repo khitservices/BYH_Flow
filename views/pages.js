@@ -192,6 +192,7 @@ function clientAdd(f, msg) {
 <fieldset style="border:1px solid #ddd;border-radius:6px;margin:16px 0 8px;padding:8px 12px"><legend style="font-size:14px;font-weight:600">Under 16</legend>
 <label class="check"><input type="checkbox" name="under16" ${f.under16 ? 'checked' : ''}> This client is under 16</label>
 <p class="muted" style="margin:8px 0 0">If so, fill in the rest of this box. Consent is given to you in person; you record it here.</p>
+<label for="dob">Date of birth (optional, but needed to work out how long their record must be kept)</label><input id="dob" name="date_of_birth" type="date" value="${esc(f.date_of_birth || '')}">
 <label for="gn">Parent or guardian's name</label><input id="gn" name="guardian_name" value="${esc(f.guardian_name)}">
 <label for="ge">Their email (optional)</label><input id="ge" name="guardian_email" type="email" value="${esc(f.guardian_email)}">
 <label for="gp">Their phone (optional)</label><input id="gp" name="guardian_phone" type="tel" value="${esc(f.guardian_phone)}">
@@ -214,7 +215,8 @@ ${pre ? sec('Initial consultation', `<p class="muted" style="margin:0">${c.ic_te
 ${sec('Contact', `<p class="muted" style="margin:0">${esc(c.email)}${c.phone ? ` · ${esc(c.phone)}` : ''}<br>${c.invited_at ? `Invited ${day(c.invited_at)}` : 'Not yet invited'}</p>
 <details><summary>Change details</summary>${post('edit', `<label for="name">Name</label><input id="name" name="name" required value="${esc(c.name)}">
 <label for="email">Email</label><input id="email" name="email" type="email" required value="${esc(c.email)}">
-<label for="phone">Phone</label><input id="phone" name="phone" type="tel" value="${esc(c.phone)}"><button class="alt">Save changes</button>`)}</details>
+<label for="phone">Phone</label><input id="phone" name="phone" type="tel" value="${esc(c.phone)}">
+<label for="dobe">Date of birth (optional)</label><input id="dobe" name="date_of_birth" type="date" value="${c.date_of_birth ? esc(require('../lib/retention').dateOnly(c.date_of_birth)) : ''}"><button class="alt">Save changes</button>`)}</details>
 ${closed ? '' : post('invite', '<button class="alt">Send invitation again</button>')}`)}
 ${c.under16 ? sec('Consent (under 16)', `<p class="muted" style="margin:0">Parent or guardian: ${esc(c.guardian_name)}${c.guardian_email ? ` · ${esc(c.guardian_email)}` : ''}${c.guardian_phone ? ` · ${esc(c.guardian_phone)}` : ''}<br>
 ${c.consent_status === 'granted' ? `Consent given in person on ${day(c.consent_at)}${c.consent_note ? `. ${esc(c.consent_note)}` : ''}` : 'Consent is recorded when they proceed.'}</p>`) : ''}
@@ -223,6 +225,7 @@ ${closed || pre ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.p
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
 ${(c.data_requests || []).length ? sec('Requests about their information', c.data_requests.map(r => `<p style="margin:0 0 6px"><strong>${r.kind === 'copy' ? 'Asked for a copy of their information' : 'Asked for their information to be deleted'}</strong> <span class="muted">${esc(r.when)}</span>${r.note ? `<br>${esc(r.note)}` : ''}</p>${post('data_done', `<input type="hidden" name="id" value="${r.id}"><label for="dn${r.id}">Note of what you did (optional)</label><input id="dn${r.id}" name="note" maxlength="300"><button class="alt">Mark as dealt with</button>`)}`).join('') + '<p class="muted" style="margin:6px 0 0">Reply to them yourself. Some clinical records may have to be kept for a period, so check before deleting anything.</p>') : ''}
 ${pre ? '' : sec('Their journal', journalCounts(c.journal))}
+${pre ? '' : keepingSection(c, post)}
 ${sec('How they have been feeling', `${c.scores && c.scores.some(s => s.score) ? scoreBars(c.scores) : '<p class="muted">No weekly scores entered yet.</p>'}${(c.scores || []).some(s => s.note) ? noteList(c.scores, 'They wrote').replace('<section class="card"><h2>Notes</h2>', '<h3 style="margin:12px 0 6px;font-size:15px">Their notes</h3>').replace(/<\/section>$/, '') : ''}<p class="muted" style="margin:6px 0 0">Their own 1 to 10 each week, last 12 weeks. Only you can see this, not the practice manager.</p>`)}
 ${pre || c.archived_at ? '' : sec('Blocks of sessions', `${(c.blocks || []).map(b => `<p style="margin:0 0 6px"><strong>Block ${b.number}${b.name ? `: ${esc(b.name)}` : ''}</strong> ${b.id === c.current_block_id && c.status !== 'closed' ? '<span class="muted">(current)</span>' : ''}<br><span class="muted">${b.sessions} session${b.sessions === 1 ? '' : 's'}${b.price_pence != null ? ` · ${money(b.price_pence)}` : ''} · ${b.held + b.sessions_before_app} of ${b.sessions} had · started ${day(b.started_at)}${b.ended_at ? `, ended ${day(b.ended_at)}` : ''}</span></p>`).join('')}
 <details><summary>Start a further block or a single session</summary>${post('new_block', `<label for="nb">Programme</label><select id="nb" name="programme" ${sel}>${programmeOpts(c.programmes || [], '')}</select>
@@ -361,6 +364,18 @@ var d=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDe
 b.addEventListener('click',function(){if(!d)return;d.prompt();d.userChoice.then(function(r){if(r&&r.outcome==='accepted')c.style.display='none';d=null;});});
 window.addEventListener('appinstalled',function(){c.style.display='none';});})();</script>`;
 
+// How long this record is kept, and the hold control. Shown for clients, not for people who have only had a consultation.
+const keepingSection = (c, post) => {
+  const r = c.retention || {}, closed = c.status === 'closed';
+  const line = closed ? (r.needsDob ? `<strong>Their date of birth is needed.</strong> This record is for someone under 16, and how long it must be kept depends on their age. Until it is entered, nothing is deleted automatically. Add it under Change details.`
+      : `After their last contact (${esc(day(r.last))}) this record is kept until <strong>${esc(day(r.until))}</strong>, then deleted automatically${c.retention_hold ? ' <strong>unless the hold below is on</strong>' : ''}.`)
+    : `While they are a client the record is kept. Once you close it, it is kept for ${r.years || 7} years after their last contact (for someone under 18, until their 25th birthday, or 26th if they were 17, if that is later), then deleted automatically. ${c.under16 && !c.date_of_birth ? 'Add their date of birth under Change details so this can be worked out.' : ''}`;
+  return `<section class="card"><h2>Keeping this record</h2><p class="muted" style="margin:0 0 8px">${line}</p>
+<p class="muted" style="margin:0 0 8px">The deletion covers their details, sessions, signed forms and weekly scores. Their journal is private to them and is deleted when they ask for their information to be deleted.</p>
+${post('retention_hold', `<label class="check"><input type="checkbox" name="hold" ${c.retention_hold ? 'checked' : ''}> Do not delete this record automatically (a complaint or legal matter is possible)</label>
+<label for="hn">Why</label><input id="hn" name="hold_note" maxlength="300" value="${esc(c.retention_hold_note || '')}"><button class="alt">Save</button>`)}</section>`;
+};
+
 function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
@@ -394,7 +409,10 @@ function clientAccountPage(d, msg, ok) {
   return page('My account', `<p style="margin:0 0 4px"><strong style="font-size:22px">My account</strong></p><p class="muted" style="margin:0">Your details and your information.</p>${note(msg, ok)}
 <div class="grid"><section class="card"><h2>Your details</h2><p><strong>${esc(d.name)}</strong><br>${esc(d.under16 ? (d.guardian_email || d.email) : d.email)}</p><p class="muted">Your therapist is ${esc(d.therapist)}. To change your details, ask your therapist.</p><div class="links"><a href="/logout">Sign out</a></div></section>
 <section class="card"><h2>A copy of my information</h2>${ask('copy', 'Ask for a copy', `You can ask ${esc(d.therapist)} for a copy of the information held about you.`)}</section>
-<section class="card"><h2>Delete my information</h2>${ask('delete', 'Ask for my information to be deleted', `You can ask ${esc(d.therapist)} to delete your information. Some records may have to be kept for a period. Your therapist will explain what can be deleted.`)}</section></div>
+<section class="card"><h2>Delete my information</h2>${open('delete') ? `<p><strong>Requested.</strong> <span class="muted">${esc(d.therapist)} has your request. Your journal has been deleted.</span></p>`
+  : `<form method="post" action="/journal/account"><input type="hidden" name="kind" value="delete"><p class="muted" style="margin:0 0 8px"><strong>Your journal</strong> is yours alone. If you ask, it is deleted straight away, with any photos and files, and cannot be brought back.</p>
+<p class="muted" style="margin:0 0 8px"><strong>Your records with ${esc(d.therapist)}</strong> (your details, sessions, signed forms and weekly scores) have to be kept for a set time, as professional guidance requires of therapists: 7 years after your last session, or for someone under 18, until they are 25 (26 if they were 17). After that they are deleted automatically. ${esc(d.therapist)} will explain this to you.</p>
+<label class="check"><input type="checkbox" name="confirm"> Delete my journal now. I understand it cannot be brought back.</label><label for="ndelete">Anything you would like to add (optional)</label><input id="ndelete" name="note" maxlength="500"><button class="alt">Delete my journal and pass on my request</button></form>`}</section></div>
 ${(d.requests || []).length ? `<section class="card"><h2>Your requests</h2>${d.requests.map(r => `<p style="margin:0 0 4px">${r.kind === 'copy' ? 'Copy of my information' : 'Deletion of my information'} <span class="muted">${esc(r.when)} · ${r.done ? 'dealt with' : 'with your therapist'}</span></p>`).join('')}</section>` : ''}`, 'wide', { who: d.name, home: '/journal' });
 }
 function clientHelpPage(d) {

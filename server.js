@@ -74,6 +74,8 @@ if (require.main === module) {
   const remind = () => require('./lib/reminders').run().then(r => { const n = Object.values(r).reduce((a, b) => a + b, 0); if (n) console.log('[reminders] sent', JSON.stringify(r)); }).catch(e => console.error('[reminders]', e.message));
   const retry = () => require('./lib/notify').retryPending().then(n => n && console.log(`[notify] ${n} enquiry email(s) sent on retry`)).catch(e => console.error('[notify]', e.message));
   setInterval(retry, 300000).unref();
+  const retain = () => require('./lib/retention').run().then(n => n && console.log(`[retention] ${n} record(s) deleted at the end of their retention period`)).catch(e => console.error('[retention]', e.message));
+  setTimeout(retain, 120000); setInterval(retain, 3600000).unref();
   setTimeout(remind, 60000); setInterval(remind, 3600000).unref();
 }
 module.exports = app;
