@@ -130,7 +130,7 @@ ${links.map(l => `<p><a href="${esc(l.href)}">${esc(l.label)}</a></p>`).join('')
 function team(rows, myId, msg, ok) {
   const short = { therapist: 'Therapist', practice_manager: 'Practice manager' };
   const others = id => rows.filter(r => r.role === 'therapist' && r.status === 'active' && r.id !== id);
-  const card = r => `<section style="border-top:1px solid #ddd;padding:14px 0" aria-label="${esc(r.name)}">
+  const card = r => `<section class="card" aria-label="${esc(r.name)}">
 <p style="margin:0"><strong>${esc(r.name)}</strong>${r.id === myId ? ' (you)' : ''}<br><span class="muted">${esc(short[r.role])} · ${esc(r.email)} · ${r.status === 'active' ? (r.invited_at ? 'Active' : 'Active, not yet invited') : 'Suspended'}${r.role === 'therapist' ? ` · ${r.clients} client${r.clients === 1 ? '' : 's'}` : ''}</span>${r.close_requested_at ? '<br><strong style="color:#8a4a00">Has asked for this account to be closed</strong>' : ''}</p>
 <details><summary>Change</summary>
 <form method="post" action="/practice/team/${r.id}"><input type="hidden" name="action" value="edit">
@@ -143,17 +143,15 @@ ${r.id === myId ? '' : `<form method="post" action="/practice/team/${r.id}"><inp
 ${r.clients > 0 ? `<label for="t${r.id}">Move their ${r.clients} client${r.clients === 1 ? '' : 's'} to</label><select id="t${r.id}" name="reassign_to" required style="font-size:16px;padding:11px;width:100%;margin:6px 0"><option value="">Choose a therapist</option>${others(r.id).map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select>` : ''}
 <button style="background:#b00020">Remove ${esc(r.name)}</button></form>`}
 </details></section>`;
-  return wide('Team', `<p><strong>Team</strong></p>
-<p class="muted">Each account is either a therapist or a practice manager. One person can have both under the same email address; they are separate accounts.</p>
+  return wide('Team', `<p style="margin:0 0 4px"><strong style="font-size:22px">Team</strong></p><p class="muted" style="margin:0">Each account is either a therapist or a practice manager. One person can have both under the same email address; they are separate accounts.</p>
 ${msg ? `<p role="status" style="color:${ok === false ? '#b00020' : '#0a6b2d'}">${esc(msg)}</p>` : ''}
-${rows.map(card).join('')}
-<section style="border-top:1px solid #ddd;padding-top:14px"><p><strong>Add someone</strong></p>
+<div class="grid">${rows.map(card).join('')}
+<section class="card"><h2>Add someone</h2>
 <form method="post" action="/practice/team/add">
 <label for="an">Name</label><input id="an" name="name" required>
 <label for="ae">Email</label><input id="ae" name="email" type="email" required>
 <label for="ar">Type of account</label><select id="ar" name="role" style="font-size:16px;padding:11px;width:100%;margin:6px 0"><option value="therapist">Therapist</option><option value="practice_manager">Practice manager</option></select>
-<button>Add and send invitation</button></form></section>
-<p><a href="/practice">Back</a></p>`);
+<button>Add and send invitation</button></form></section></div>`);
 }
 
 // ---- therapist account: clients (carried over from the BYH app's therapist section) ----
@@ -370,23 +368,22 @@ ${block('Past', past, 'None yet.')}${gone.length ? block('Cancelled', gone, '') 
 }
 
 function book(active, msg, ok, locs) {
-  return read('Book a session', `<p><strong>Book a session</strong></p>${note(msg, ok)}
-${active.length ? `<form method="post" action="/therapist/book"><label for="cl">Client</label><select id="cl" name="client_id" required ${sel}><option value="">Choose a client</option>${opts(active.map(c => [c.id, c.name]))}</select>
-${whenFields('b')}${locField('b', locs, 'book')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}
-<p><a href="/therapist">Back</a></p>`);
+  return wide('Book a session', `<p style="margin:0 0 4px"><strong style="font-size:22px">Book a session</strong></p>${note(msg, ok)}
+<div class="grid"><section class="card">${active.length ? `<form method="post" action="/therapist/book"><label for="cl">Client</label><select id="cl" name="client_id" required ${sel}><option value="">Choose a client</option>${opts(active.map(c => [c.id, c.name]))}</select>
+${whenFields('b')}${locField('b', locs, 'book')}<button>Book</button></form>` : '<p class="muted">You have no active clients yet.</p>'}</section></div>`);
 }
 
 function schedule(rows, feed, msg, ok, locs) {
   let lastDay = '';
   const line = a => { const d = T.dateLong(a.starts_at); const head = d !== lastDay ? `<p style="margin:14px 0 4px"><strong>${esc(d)}</strong></p>` : ''; lastDay = d;
     return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${whereText(a) ? `<br><span class="muted">${esc(whereText(a))}</span>` : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule', locs)}</div>`; };
-  return wide('Schedule', `<p><strong>Schedule</strong> <span class="muted">next 60 days</span></p>${note(msg, ok)}
-${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}
-<section style="border-top:1px solid #ddd;padding:12px 0;margin-top:14px"><p style="margin:0 0 6px"><strong>See this in your own calendar</strong></p>
+  return wide('Schedule', `<p style="margin:0 0 4px"><strong style="font-size:22px">Schedule</strong></p><p class="muted" style="margin:0">The next 60 days.</p>${note(msg, ok)}
+<div class="grid"><section class="card" style="grid-column:span 2"><h2>Booked</h2>${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}<div class="links"><a href="/therapist/book">Book a session</a></div></section>
+<section class="card"><h2>See this in your own calendar</h2>
 <p class="muted" style="margin:0">A private link you add once to Outlook, Apple or Google Calendar as a subscribed calendar. It shows session times with the client's first name and initial only. Calendar apps refresh it every few hours.</p>
 <form method="post" action="/therapist/schedule/feed"><button class="alt">${feed.hasFeed ? 'Replace my calendar link (the old one stops working)' : 'Create my calendar link'}</button></form>
 ${feed.hasFeed ? '<form method="post" action="/therapist/schedule/feed"><input type="hidden" name="action" value="off"><button class="alt">Turn the calendar link off</button></form>' : ''}</section>
-<p><a href="/therapist/book">Book a session</a></p><p><a href="/therapist">Back</a></p>`);
+</div>`);
 }
 
 const feedLink = url => read('Your calendar link', `<p><strong>Your calendar link</strong></p>
@@ -396,10 +393,10 @@ const feedLink = url => read('Your calendar link', `<p><strong>Your calendar lin
 <p><a href="/therapist/schedule">Back to schedule</a></p>`);
 
 function therapistAccount(me, mine, colleagues, msg, ok, x = {}) {
-  const sec = (title, inner) => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0 0 6px"><strong>${title}</strong></p>${inner}</section>`;
+  const sec = (title, inner) => `<section class="card"><h2>${title}</h2>${inner}</section>`;
   const post = (action, inner) => `<form method="post" action="/therapist/account"><input type="hidden" name="action" value="${action}">${inner}</form>`;
-  return wide('Account', `<p><strong>Your account</strong><br><span class="muted">${esc(me.name)} · ${esc(me.email)}</span></p>${note(msg, ok)}
-${sec('My details (used on forms)', `<p class="muted" style="margin:0">Filled into the forms you send, such as the agreement. Leave blank anything you do not want shown.</p>
+  return wide('Account', `<p style="margin:0 0 4px"><strong style="font-size:22px">My account</strong></p><p class="muted" style="margin:0">${esc(me.name)} · ${esc(me.email)}</p>${note(msg, ok)}
+<div class="grid">${sec('My details (used on forms)', `<p class="muted" style="margin:0">Filled into the forms you send, such as the agreement. Leave blank anything you do not want shown.</p>
 ${post('details', `<label for="dq">Qualifications</label><input id="dq" name="qualifications" maxlength="200" value="${esc(me.qualifications)}">
 <label for="da">Address</label><input id="da" name="address" maxlength="200" value="${esc(me.address)}">
 <label for="dp">Postcode</label><input id="dp" name="postcode" maxlength="20" value="${esc(me.postcode)}">
@@ -427,16 +424,16 @@ ${mine.map(c => `<label class="check"><input type="checkbox" name="client_id" va
 ${sec('Close my account', me.close_requested_at
     ? `<p class="muted" style="margin:0">You asked for this account to be closed on ${day(me.close_requested_at)}. The practice manager has been told; nothing changes until they act.</p>${post('withdraw_close', '<button class="alt">Withdraw my request</button>')}`
     : `<p class="muted" style="margin:0">This asks the practice manager to close your account. It is not instant. Hand your clients over first if they are continuing with a colleague.</p>${post('request_close', '<button class="alt">Ask to close my account</button>')}`)}
-<p><a href="/therapist">Back</a></p>`);
+</div>`);
 }
 
 // s: settings to show (never a password). msg/ok: result of the last save or test.
 function mailSettings(s, myEmail, msg, ok, typedPassword = '') {
-  return read('Email settings', `<p><strong>Email settings</strong></p>
-<p class="muted">Everything the app sends (sign-in codes and links, and later reminders and consent requests) goes out from this mailbox. Use the outgoing (SMTP) details from your email provider.</p>
+  return wide('Email settings', `<p style="margin:0 0 4px"><strong style="font-size:22px">Email settings</strong></p>
+<p class="muted" style="margin:0">Everything the app sends (sign-in codes and links, and later reminders and consent requests) goes out from this mailbox. Use the outgoing (SMTP) details from your email provider.</p>
 ${msg ? `<p role="status" style="color:${ok ? '#0a6b2d' : '#b00020'}">${esc(msg)}</p>` : ''}
 ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on the server, so a password cannot be saved yet.</p>'}
-<form method="post" action="/practice/settings/email" autocomplete="off">
+<div class="grid"><section class="card" style="max-width:640px;grid-column:1/-1"><form method="post" action="/practice/settings/email" autocomplete="off">
 <label for="from_address">Send from (email address)</label><input id="from_address" name="from_address" type="email" required value="${esc(s.from_address)}">
 <label for="from_name">Sender name shown to recipients</label><input id="from_name" name="from_name" value="${esc(s.from_name)}">
 <label for="smtp_host">Outgoing (SMTP) server</label><input id="smtp_host" name="smtp_host" required placeholder="smtp.example.com" value="${esc(s.smtp_host)}">
@@ -445,8 +442,7 @@ ${s.secrets_key_set ? '' : '<p style="color:#b00020">SECRETS_KEY is not set on t
 <label for="smtp_user">Username (leave blank to use the address above)</label><input id="smtp_user" name="smtp_user" value="${esc(s.smtp_user)}">
 <label for="smtp_password">Password${s.password_set ? ' (one is saved; leave blank to keep it)' : ''}</label><input id="smtp_password" name="smtp_password" type="password" autocomplete="new-password" value="${esc(typedPassword)}" placeholder="${s.password_set ? 'Saved. Leave blank to keep it' : 'Not set'}">
 <button name="action" value="test" class="alt">Send a test email to ${esc(myEmail)}</button>
-<button name="action" value="save">Save</button></form>
-<p><a href="/practice">Back</a></p>`);
+<button name="action" value="save">Save</button></form></section></div>`);
 }
 
 function practiceSettings(s, msg, ok) {
@@ -626,18 +622,18 @@ function locationsPage(rows, msg, ok) {
 }
 
 function programmes(rows, msg, ok) {
-  const card = p => `<section style="border-top:1px solid #ddd;padding:12px 0"><p style="margin:0"><strong>${esc(p.name)}</strong>${p.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${p.sessions} session${p.sessions === 1 ? '' : 's'}${p.price_pence != null ? ` · ${money(p.price_pence)}` : ' · no price set'}</span></p>
+  const card = p => `<section class="card"><p style="margin:0"><strong>${esc(p.name)}</strong>${p.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${p.sessions} session${p.sessions === 1 ? '' : 's'}${p.price_pence != null ? ` · ${money(p.price_pence)}` : ' · no price set'}</span></p>
 <details><summary>Change</summary><form method="post" action="/practice/programmes/${p.id}">
 <label for="n${p.id}">Name</label><input id="n${p.id}" name="name" required maxlength="80" value="${esc(p.name)}">
 <label for="s${p.id}">Sessions</label><input id="s${p.id}" name="sessions" inputmode="numeric" required value="${p.sessions}">
 <label for="p${p.id}">Price in pounds (optional)</label><input id="p${p.id}" name="price" inputmode="decimal" value="${p.price_pence == null ? '' : esc((p.price_pence / 100).toFixed(2))}">
 <button>Save</button></form>
 <form method="post" action="/practice/programmes/${p.id}"><input type="hidden" name="action" value="${p.active ? 'retire' : 'restore'}"><button class="alt">${p.active ? 'Retire (stop offering it)' : 'Offer again'}</button></form></details></section>`;
-  return wide('Programmes', `<p><strong>Programmes and prices</strong></p><p class="muted">What therapists choose from when they add a client. A single fixed-price session, such as smoking cessation, is a programme of 1 session. Prices are recorded for the therapist to see; no payments are taken here.</p>${note(msg, ok)}
-${rows.map(card).join('')}
-<form method="post" action="/practice/programmes" style="border-top:1px solid #ddd;padding-top:12px"><p style="margin:0"><strong>Add a programme</strong></p>
+  return wide('Programmes', `<p style="margin:0 0 4px"><strong style="font-size:22px">Programmes and prices</strong></p><p class="muted" style="margin:0">What therapists choose from when they add a client. A single fixed-price session, such as smoking cessation, is a programme of 1 session. Prices are recorded for the therapist to see; no payments are taken here.</p>${note(msg, ok)}
+<div class="grid">${rows.map(card).join('')}
+<section class="card"><h2>Add a programme</h2><form method="post" action="/practice/programmes">
 <label for="an">Name</label><input id="an" name="name" required maxlength="80" placeholder="Smoking cessation"><label for="as">Sessions</label><input id="as" name="sessions" inputmode="numeric" required value="1">
-<label for="ap">Price in pounds (optional)</label><input id="ap" name="price" inputmode="decimal"><button>Add programme</button></form><p><a href="/practice">Back</a></p>`);
+<label for="ap">Price in pounds (optional)</label><input id="ap" name="price" inputmode="decimal"><button>Add programme</button></form></section></div>`);
 }
 
 // ---------- forms ----------
@@ -677,11 +673,11 @@ const formatSelect = id => `<label for="fmt${id}">Sessions will be</label><selec
 const templateSelect = (id, list) => `<label for="tp${id}">Form</label><select id="tp${id}" name="template" ${sel}>${list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>`;
 
 function formTemplates(rows, msg, ok) {
-  return wide('Forms', `<p><strong>Forms</strong></p><p class="muted">The forms therapists can send for signing. The Inspired To Change forms are included; add your own for other practices or a standalone practitioner. Wording you change here applies to forms sent from then on; forms already sent keep their wording.</p>${note(msg, ok)}
-${rows.map(t => `<section style="border-top:1px solid #ddd;padding:10px 0"><strong>${esc(t.name)}</strong>${t.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${t.audience === 'child' ? 'Signed by a parent or guardian' : 'Signed by the client'}</span><br>
+  return wide('Forms', `<p style="margin:0 0 4px"><strong style="font-size:22px">Forms</strong></p><p class="muted" style="margin:0">The forms therapists can send for signing. The Inspired To Change forms are included; add your own for other practices or a standalone practitioner. Wording you change here applies to forms sent from then on; forms already sent keep their wording.</p>${note(msg, ok)}
+<div class="grid">${rows.map(t => `<section class="card"><strong>${esc(t.name)}</strong>${t.active ? '' : ' <span class="muted">(retired)</span>'}<br><span class="muted">${t.audience === 'child' ? 'Signed by a parent or guardian' : 'Signed by the client'}</span><br>
 <a href="/practice/forms/${t.id}">Edit</a> · <a href="/practice/forms/${t.id}/preview">Preview</a>
 <form method="post" action="/practice/forms/${t.id}" style="display:inline"><input type="hidden" name="action" value="${t.active ? 'retire' : 'restore'}"><button class="alt">${t.active ? 'Retire' : 'Offer again'}</button></form></section>`).join('')}
-<p><a href="/practice/forms/new"><strong>Add a form</strong></a></p><p><a href="/practice">Back</a></p>`);
+<section class="card"><h2>Add a form</h2><p class="muted">Write your own wording for another practice or a standalone practitioner.</p><div class="links"><a href="/practice/forms/new">Add a form</a></div></section></div>`);
 }
 function formTemplateEdit(t, F, error) {
   const f = t.form, sf = f.signer_fields || [];
