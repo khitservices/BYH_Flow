@@ -332,3 +332,12 @@
 - **Reminders switch** now covers the weekly check-in and appointment and consultation reminders. Label on the client record updated.
 - **Sources:** Leaflet/Flyer added to the list.
 - Peter Parker's forms: ignored (test data).
+
+## Client journal (19 Nov 2026, brought across from the live BYH app)
+- **Privacy as in BYH, confirmed by Kev:** only the client can read their journal entries and open their files. The therapist and the practice manager never can. The therapist's client record shows counts only: total entries, entries in the last 7 days, date last written, and a six-week bar chart. Never the text, never file names. (This is separate from the weekly score note, which the therapist does see by Kev's decision.)
+- **Entries:** written text and/or one attached file per entry (photo, PDF, Word document, text file; up to 15 MB). File type is decided from the file's own first bytes, not the name or type the browser claims, so a program renamed to .png is refused. Files are stored encrypted (same store as signed forms) and are served only to the owning client, as downloads except images and PDFs, with no sniffing and no caching.
+- **Editing:** an entry can be changed once, within 15 minutes of posting (database clock); saving an edit locks it for good. Attached files cannot be swapped.
+- **Grouping:** entries sit under the next booked session after they were written ("Leading up to your session on ..."), or "After your last booked session". Entries belong to the block of sessions current when written; earlier blocks are readable but not editable (Look back at earlier blocks).
+- **Who can add:** active clients. Read-only clients can read, not add or edit.
+- Migration 030 (clinical.journal_entries). Client menu gains "My journal"; the client home gets a card.
+- Not yet: weekly reminder wording does not mention the journal; deleting a client's journal files from the store when their information is deleted (deletion is manual for now, so files would remain in the store until that is built: add to the deletion work); search; therapist "ending soon" flags.

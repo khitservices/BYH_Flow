@@ -349,6 +349,56 @@ router.post('/journal/score', myClient, async (req, res) => {
   if (!scoreOK(c)) return res.redirect('/journal');
   res.redirect(`/journal/score?msg=${(await scores.save(id, req.body.score, req.body.note)) ? 'saved' : 'bad'}`);
 });
+// ---- client: private journal. Content and files are for the signed-in client only; therapists see counts (lib/journal.js counts()). ----
+const journal = require('../lib/journal');
+const jUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: journal.MAX_FILE, files: 1, fields: 4, parts: 6 } });
+const JMSG = { saved: ['Saved to your journal.', true], empty: ['Write something or choose a file first.', false], file: ['That file could not be added. Use a photo, PDF, Word document or text file up to 15 MB.', false], big: ['That file is too large. The limit is 15 MB.', false], edited: ['Your entry has been changed.', true], locked: ['That entry can no longer be changed.', false] };
+const jClient = id => one(`SELECT c.id, c.name, c.status, c.current_block_id, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [id]);
+const jCanAdd = c => c && c.status === 'active';
+// Entries sit under the next booked session after they were written, so they read as preparation for it.
+async function jGroups(c, items) {
+  const appts = await q(`SELECT starts_at FROM clinical.appointments WHERE client_id=$1 AND status='booked' ORDER BY starts_at`, [c.id]);
+  const groups = [];
+  for (const e of items) {
+    const t = appts.find(a => a.starts_at >= e.created_at);
+    const label = t ? `Leading up to your session on ${T.dateLong(t.starts_at)}` : 'After your last booked session';
+    if (!groups.length || groups[groups.length - 1].label !== label) groups.push({ label, items: [] });
+    groups[groups.length - 1].items.push({ ...e, when: T.when(e.created_at) });
+  }
+  return groups;
+}
+router.get('/journal/entries', myClient, async (req, res) => {
+  const c = await jClient(req.session.client.id), m = JMSG[String(req.query.msg || '')] || [];
+  const earlier = (await one(`SELECT count(*)::int n FROM clinical.journal_entries WHERE client_id=$1 AND block_id IS DISTINCT FROM $2`, [c.id, c.current_block_id])).n;
+  res.status(m[1] === false ? 400 : 200).send(V.clientJournalPage({ who: c.name, therapist: c.therapist, canAdd: jCanAdd(c), maxBody: journal.MAX_BODY, earlier: earlier > 0,
+    groups: await jGroups(c, await journal.entries(c.id, c.current_block_id, true)) }, m[0], m[1]));
+});
+router.post('/journal/entries', myClient, (req, res, next) => jUpload.single('file')(req, res, err => err ? res.redirect('/journal/entries?msg=big') : next()), async (req, res) => {
+  const c = await jClient(req.session.client.id);
+  if (!jCanAdd(c)) return res.redirect('/journal/entries');
+  const r = await journal.add(c, req.body.body, req.file);
+  res.redirect(`/journal/entries?msg=${r.error || 'saved'}`);
+});
+router.get('/journal/entries/:id/edit', myClient, async (req, res) => {
+  const c = await jClient(req.session.client.id), e = await journal.entries(c.id, c.current_block_id, true).then(l => l.find(x => String(x.id) === req.params.id));
+  if (!jCanAdd(c) || !e || !e.editable_now) return res.redirect('/journal/entries?msg=locked');
+  res.send(V.clientJournalEditPage({ id: e.id, body: e.body, when: T.when(e.created_at), who: c.name, maxBody: journal.MAX_BODY }));
+});
+router.post('/journal/entries/:id/edit', myClient, async (req, res) => {
+  const c = await jClient(req.session.client.id);
+  if (!jCanAdd(c) || !/^\d+$/.test(req.params.id)) return res.redirect('/journal/entries?msg=locked');
+  const r = await journal.edit(c.id, req.params.id, req.body.body);
+  res.redirect(`/journal/entries?msg=${r === 'saved' ? 'edited' : r === 'empty' ? 'empty' : 'locked'}`);
+});
+router.get('/journal/earlier', myClient, async (req, res) => {
+  const c = await jClient(req.session.client.id);
+  res.send(V.clientJournalEarlierPage({ who: c.name, groups: await jGroups(c, await journal.entries(c.id, c.current_block_id, false)) }));
+});
+router.get('/journal/file/:id', myClient, async (req, res) => {
+  const f = /^\d+$/.test(req.params.id) ? await journal.file(req.session.client.id, req.params.id) : null;
+  if (!f) return res.status(404).send(V.forbidden());
+  res.set({ 'Content-Type': f.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store', ...(f.mime === 'application/pdf' ? {} : { 'Content-Security-Policy': "default-src 'none'" }), 'Content-Disposition': `${f.inline ? 'inline' : 'attachment'}; filename="${f.name.replace(/[^A-Za-z0-9._ -]/g, '_')}"` }).send(f.buffer);
+});
 // ---- client: account, requests about their information, help ----
 const DMSG = { copy: ['Your request for a copy of your information has been passed to your therapist.', true], delete: ['Your request to delete your information has been passed to your therapist.', true],
   already: ['You already have that request open. Your therapist has it.', false], limited: ['Too many requests. Please try again later.', false], gone: ['That is not available.', false] };

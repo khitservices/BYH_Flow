@@ -19,7 +19,7 @@ const MENUS = {
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
-    { label: 'Home', href: '/journal', exact: true }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' }, { label: 'My account', href: '/journal/account' }, { label: 'Help', href: '/journal/help' },
+    { label: 'Home', href: '/journal', exact: true }, { label: 'My journal', href: '/journal/entries' }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' }, { label: 'My account', href: '/journal/account' }, { label: 'Help', href: '/journal/help' },
   ],
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
@@ -222,6 +222,7 @@ ${sec('Forms', `${formsBlock(c.forms || [], 'therapist') || '<p class="muted" st
 ${closed || pre ? '' : sec('Programme', `<p class="muted" style="margin:0">${c.programme_name ? esc(c.programme_name) + ': ' : ''}${c.programme_sessions} session${c.programme_sessions === 1 ? '' : 's'}${c.programme_price_pence != null ? ` · ${money(c.programme_price_pence)}` : ''}${c.sessions_before_app ? `, ${c.sessions_before_app} had before joining` : ''}. Started ${day(c.programme_started_at)}.</p>
 ${post('extend', `<label for="add">Extend by</label><select id="add" name="add_sessions" ${sel}>${lengthOpts(6)}</select><button class="alt">Extend programme</button>`)}`)}
 ${(c.data_requests || []).length ? sec('Requests about their information', c.data_requests.map(r => `<p style="margin:0 0 6px"><strong>${r.kind === 'copy' ? 'Asked for a copy of their information' : 'Asked for their information to be deleted'}</strong> <span class="muted">${esc(r.when)}</span>${r.note ? `<br>${esc(r.note)}` : ''}</p>${post('data_done', `<input type="hidden" name="id" value="${r.id}"><label for="dn${r.id}">Note of what you did (optional)</label><input id="dn${r.id}" name="note" maxlength="300"><button class="alt">Mark as dealt with</button>`)}`).join('') + '<p class="muted" style="margin:6px 0 0">Reply to them yourself. Some clinical records may have to be kept for a period, so check before deleting anything.</p>') : ''}
+${pre ? '' : sec('Their journal', journalCounts(c.journal))}
 ${sec('How they have been feeling', `${c.scores && c.scores.some(s => s.score) ? scoreBars(c.scores) : '<p class="muted">No weekly scores entered yet.</p>'}${(c.scores || []).some(s => s.note) ? noteList(c.scores, 'They wrote').replace('<section class="card"><h2>Notes</h2>', '<h3 style="margin:12px 0 6px;font-size:15px">Their notes</h3>').replace(/<\/section>$/, '') : ''}<p class="muted" style="margin:6px 0 0">Their own 1 to 10 each week, last 12 weeks. Only you can see this, not the practice manager.</p>`)}
 ${pre || c.archived_at ? '' : sec('Blocks of sessions', `${(c.blocks || []).map(b => `<p style="margin:0 0 6px"><strong>Block ${b.number}${b.name ? `: ${esc(b.name)}` : ''}</strong> ${b.id === c.current_block_id && c.status !== 'closed' ? '<span class="muted">(current)</span>' : ''}<br><span class="muted">${b.sessions} session${b.sessions === 1 ? '' : 's'}${b.price_pence != null ? ` · ${money(b.price_pence)}` : ''} · ${b.held + b.sessions_before_app} of ${b.sessions} had · started ${day(b.started_at)}${b.ended_at ? `, ended ${day(b.ended_at)}` : ''}</span></p>`).join('')}
 <details><summary>Start a further block or a single session</summary>${post('new_block', `<label for="nb">Programme</label><select id="nb" name="programme" ${sel}>${programmeOpts(c.programmes || [], '')}</select>
@@ -296,6 +297,42 @@ function clientScorePage(d, msg, ok) {
 ${noteList(d.series, 'You wrote')}</div>`, 'wide', { who: d.who, home: '/journal' });
 }
 
+// ---- client journal: private to the client ----
+const bytesText = n => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+const entryHtml = (e, canEdit) => `<div style="border-left:3px solid #cfd8dc;padding:2px 0 2px 12px;margin:10px 0"><p class="muted" style="margin:0 0 4px">${esc(e.when)}${e.edited_at ? ' · edited' : ''}</p>
+${e.body ? `<p style="margin:0;white-space:pre-wrap">${esc(e.body)}</p>` : ''}
+${e.has_file ? (['image/jpeg', 'image/png', 'image/webp'].includes(e.file_mime) ? `<p style="margin:6px 0 0"><a href="/journal/file/${e.id}"><img src="/journal/file/${e.id}" alt="${esc(e.file_name)}" style="max-width:100%;max-height:360px;border-radius:6px"></a></p>`
+  : `<p style="margin:6px 0 0"><a href="/journal/file/${e.id}">${esc(e.file_name)}</a> <span class="muted">(${bytesText(e.file_bytes)})</span></p>`) : ''}
+${canEdit && e.editable_now ? `<p style="margin:6px 0 0"><a href="/journal/entries/${e.id}/edit">Edit</a> <span class="muted">(for a few minutes after you post it)</span></p>` : ''}</div>`;
+const journalGroups = (groups, canEdit) => groups.map(g => `<p style="margin:18px 0 0"><strong>${esc(g.label)}</strong></p>${g.items.map(e => entryHtml(e, canEdit)).join('')}`).join('');
+
+function clientJournalPage(d, msg, ok) {
+  return page('My journal', `<p style="margin:0 0 4px"><strong style="font-size:22px">My journal</strong></p>
+<p class="muted" style="margin:0">Somewhere to note what has been good, what has been hard, or anything you want to remember for your next session. <strong>Only you can read your journal.</strong> ${esc(d.therapist)} can see that you are writing in it, and how often, but never what you write or the photos and files you add.</p>
+${msg ? `<p style="color:${ok ? '#1a6b3a' : '#a01616'}"><strong>${esc(msg)}</strong></p>` : ''}
+<div class="grid">${d.canAdd ? `<section class="card"><h2>Add to your journal</h2><form method="post" action="/journal/entries" enctype="multipart/form-data">
+<label for="jb">What would you like to write?</label><textarea id="jb" name="body" rows="5" maxlength="${d.maxBody}" style="width:100%"></textarea>
+<label for="jf">A photo or file (optional)</label><input id="jf" name="file" type="file" accept="image/*,.pdf,.doc,.docx,.txt"><p class="muted" style="margin:2px 0 8px">Up to 15 MB. Photos, PDFs, Word documents and text files.</p>
+<button>Save to my journal</button></form></section>` : `<section class="card"><p class="muted">You can read your journal but not add to it.</p></section>`}
+<section class="card"><h2>Your entries</h2>${d.groups.length ? journalGroups(d.groups, d.canAdd) : '<p class="muted">Nothing here yet.</p>'}
+${d.earlier ? '<p style="margin-top:16px"><a href="/journal/earlier">Look back at earlier blocks of sessions</a></p>' : ''}</section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
+function clientJournalEditPage(d, msg) {
+  return page('Edit entry', `<p style="margin:0 0 4px"><strong style="font-size:22px">Edit entry</strong></p>
+<p class="muted" style="margin:0">Written ${esc(d.when)}. You can change it once; after you save it is final.</p>${msg ? `<p style="color:#a01616"><strong>${esc(msg)}</strong></p>` : ''}
+<div class="grid"><section class="card"><form method="post" action="/journal/entries/${d.id}/edit"><label for="jb">Your entry</label><textarea id="jb" name="body" rows="7" maxlength="${d.maxBody}" style="width:100%">${esc(d.body)}</textarea>
+<button>Save changes</button> <a href="/journal/entries">Cancel</a></form></section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
+function clientJournalEarlierPage(d) {
+  return page('Earlier entries', `<p style="margin:0 0 4px"><strong style="font-size:22px">Earlier entries</strong></p><p class="muted" style="margin:0">From earlier blocks of sessions. These are for reading only.</p>
+<div class="grid"><section class="card">${d.groups.length ? journalGroups(d.groups, false) : '<p class="muted">Nothing here.</p>'}<p style="margin-top:16px"><a href="/journal/entries">Back to my journal</a></p></section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
+// What the therapist sees: whether and how often the client writes. Never any content.
+const journalCounts = j => !j || !j.total ? '<p class="muted" style="margin:0">They have not written in their journal yet. You can see how often they write, never what they write.</p>'
+  : `<p style="margin:0 0 6px"><strong>${j.total}</strong> entr${j.total === 1 ? 'y' : 'ies'} so far, <strong>${j.thisWeek}</strong> in the last 7 days. Last written ${esc(day(j.last))}.</p>
+<div style="display:flex;gap:4px;align-items:flex-end;height:60px">${j.weeks.map((n, i) => `<div title="${n}" style="flex:1;background:${n ? '#4a7c8c' : '#e3e8ea'};height:${8 + Math.min(n, 8) * 6}px;border-radius:3px"></div>`).join('')}</div>
+<p class="muted" style="margin:4px 0 0">Entries per week, last six weeks, this week on the right. You can see how often they write, never what they write.</p>`;
+
 function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
@@ -303,6 +340,7 @@ ${d.pos ? `<section class="card"><h2>Your next session</h2>${d.next ? `<p><stron
 <p class="muted">${d.blockName ? `${esc(d.blockName)}: ` : ''}session ${d.pos.on} of ${d.pos.of}</p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>${(d.blocks || []).length > 1 ? `<p class="muted" style="margin-top:8px">Earlier: ${d.blocks.slice(0, -1).map(b => `${esc(b.name || 'Block ' + b.number)} (${b.sessions} session${b.sessions === 1 ? '' : 's'})`).join(', ')}</p>` : ''}</section>`
  : `<section class="card"><h2>Your initial consultation</h2>${d.ic ? `<p><strong>${esc(d.ic)}</strong></p><div class="links"><a href="/journal/sessions">See or ask to change</a></div>` : '<p class="muted">Your therapist will be in touch to arrange it.</p>'}</section>`}
 <section class="card"><h2>Forms</h2>${d.forms.filter(f => f.status !== 'void').length ? formsBlock(d.forms, 'client') : '<p class="muted">You have no forms.</p>'}</section>
+${`<section class="card"><h2>My journal</h2><p class="muted">A private place to write. Only you can read it.</p><div class="links"><a href="/journal/entries">Open my journal</a></div></section>`}
 ${`<section class="card"><h2>How I feel</h2>${d.score ? `<p>This week: <strong>${d.score}</strong> out of 10.</p>` : '<p class="muted">You have not given this week\'s score yet.</p>'}<div class="links"><a href="/journal/score">${d.score ? 'See or change it' : 'Give this week\'s score'}</a></div></section>`}
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
 </div>`, 'wide', { who: d.who, home: '/journal' });
@@ -698,4 +736,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { clientAccountPage, clientHelpPage, clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { clientJournalPage, clientJournalEditPage, clientJournalEarlierPage, clientAccountPage, clientHelpPage, clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
