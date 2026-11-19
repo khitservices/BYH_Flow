@@ -19,7 +19,7 @@ const MENUS = {
     { label: 'Email', href: '/practice/settings/email' }, { label: 'Practice details', href: '/practice/settings/practice' },
   ],
   client: [
-    { label: 'Home', href: '/journal', exact: true }, { label: 'My journal', href: '/journal/entries' }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' }, { label: 'My account', href: '/journal/account' }, { label: 'Help', href: '/journal/help' },
+    { label: 'Home', href: '/journal', exact: true }, { label: 'My journal', href: '/journal/entries' }, { label: 'How I feel', href: '/journal/score' }, { label: 'My sessions', href: '/journal/sessions' }, { label: 'Relax', href: '/journal/relax' }, { label: 'Support', href: '/journal/support' }, { label: 'My account', href: '/journal/account' }, { label: 'Help', href: '/journal/help' },
   ],
 };
 const ROLE_NAME = { therapist: 'Therapist', practice_manager: 'Practice manager', client: 'Client area' };
@@ -57,7 +57,7 @@ main.read form,main.wide form{max-width:560px}
   // the active item is the one whose address is the longest match for this page
   const here = links.filter(i => (i.exact ? ctx.path === i.href : ctx.path === i.href || ctx.path.startsWith(i.href + '/'))).sort((a, b) => b.href.length - a.href.length)[0];
   const menu = items.map(i => i.group ? `<p class="grp">${esc(i.group)}</p>` : `<a class="item${i === here ? ' on' : ''}" href="${esc(i.href)}"${i === here ? ' aria-current="page"' : ''}>${esc(i.label)}</a>`).join('');
-  const appHead = ctx.role === 'therapist' ? `<link rel="manifest" href="/app/manifest.webmanifest"><meta name="theme-color" content="${esc(BRAND.colorPrimary)}"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Enquiries"><link rel="apple-touch-icon" href="/app/icon-180.png"><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/app/sw.js').catch(function(){})</script>` : '';
+  const appHead = ctx.role === 'therapist' ? `<link rel="manifest" href="/app/manifest.webmanifest"><meta name="theme-color" content="${esc(BRAND.colorPrimary)}"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Enquiries"><link rel="apple-touch-icon" href="/app/icon-180.png"><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/app/sw.js').catch(function(){})</script>` : ctx.role === 'client' ? `<link rel="manifest" href="/app/client.webmanifest"><meta name="theme-color" content="${esc(BRAND.colorPrimary)}"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="${esc(BRAND.practiceName)}"><link rel="apple-touch-icon" href="/app/icon-180.png"><script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/app/sw.js').catch(function(){})</script>` : '';
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">${appHead}<title>${esc(title)} — ${esc(BRAND.practiceName)}</title>
 <style>${css}
@@ -333,6 +333,34 @@ const journalCounts = j => !j || !j.total ? '<p class="muted" style="margin:0">T
 <div style="display:flex;gap:4px;align-items:flex-end;height:60px">${j.weeks.map((n, i) => `<div title="${n}" style="flex:1;background:${n ? '#4a7c8c' : '#e3e8ea'};height:${8 + Math.min(n, 8) * 6}px;border-radius:3px"></div>`).join('')}</div>
 <p class="muted" style="margin:4px 0 0">Entries per week, last six weeks, this week on the right. You can see how often they write, never what they write.</p>`;
 
+// ---- client: support numbers, relax, install ----
+const helpLine = (name, text, tel, label) => `<section class="card"><h2>${esc(name)}</h2><p class="muted" style="margin:0 0 8px">${text}</p><div class="links"><a href="${tel}" style="font-weight:bold">${esc(label)}</a></div></section>`;
+function clientSupportPage(d) {
+  return page('Support', `<p style="margin:0 0 4px"><strong style="font-size:22px">Need to talk to someone?</strong></p>
+<p class="muted" style="margin:0">Your journal is private to you, so it is not a way to reach anyone if you need help right now. This page is not watched by ${esc(d.therapist)} or anyone at the practice. If things feel like too much, these people are there for you, any time, day or night.</p>
+<div class="grid"><section class="card" style="border:2px solid #d9534f"><h2>Emergency</h2><p class="muted" style="margin:0 0 8px">If you or someone else is in danger right now.</p><div class="links"><a href="tel:999" style="font-weight:bold">Call 999</a></div></section>
+${helpLine('Samaritans', 'Whatever you are going through. Free, any time.', 'tel:116123', 'Call 116 123')}
+${helpLine('Shout', 'Text a trained volunteer. Free, private, any time.', 'sms:85258?&body=SHOUT', 'Text SHOUT to 85258')}
+${helpLine('NHS 111', 'Urgent health advice when it is not a 999 emergency.', 'tel:111', 'Call 111')}
+${d.childline ? helpLine('Childline', 'Free and private, for anyone under 19.', 'tel:08001111', 'Call 0800 1111') : ''}</div>
+<p class="muted">If you are worried about your next session or want to change something, you can use <a href="/journal/sessions">My sessions</a>.</p>`, 'wide', { who: d.who, home: '/journal' });
+}
+function clientRelaxPage(d) {
+  return page('Relax', `<p style="margin:0 0 4px"><strong style="font-size:22px">Take a moment to unwind</strong></p><p class="muted" style="margin:0">A guided relaxation from ${esc(d.therapist)}.</p>
+<div class="grid"><section class="card"><h2>Guided relaxation</h2>${d.url ? `<p class="muted">Find a quiet space, get comfortable and let yourself relax.</p><div class="links"><a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-weight:bold">Play the recording</a></div>`
+  : `<p class="muted">${esc(d.therapist)} has not added a recording yet. Please check back soon.</p>`}<p class="muted" style="margin-top:12px">Best with headphones, somewhere you will not be disturbed. Never listen while driving.</p></section></div>`, 'wide', { who: d.who, home: '/journal' });
+}
+// Platform-aware install prompt: Android and desktop Chrome get a button; iPhone and iPad get the Share steps (Apple allows no button); hidden once installed.
+const installCard = () => `<section class="card" id="installcard" style="display:none"><h2>Add ${esc(BRAND.practiceName)} to your phone</h2><p class="muted" style="margin:0">Open it like an app, without typing the address.</p>
+<button id="installbtn" style="display:none;margin-top:10px">Add to my phone</button>
+<p id="installios" class="muted" style="display:none;margin:10px 0 0">Tap the Share icon in your browser bar, then choose <strong>Add to Home Screen</strong>.</p></section>
+<script>(function(){var c=document.getElementById('installcard');if(!c)return;if(window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true)return;
+var b=document.getElementById('installbtn'),i=document.getElementById('installios');
+if(/iphone|ipad|ipod/i.test(navigator.userAgent)&&!window.MSStream){c.style.display='block';i.style.display='block';return;}
+var d=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();d=e;c.style.display='block';b.style.display='inline-block';});
+b.addEventListener('click',function(){if(!d)return;d.prompt();d.userChoice.then(function(r){if(r&&r.outcome==='accepted')c.style.display='none';d=null;});});
+window.addEventListener('appinstalled',function(){c.style.display='none';});})();</script>`;
+
 function clientHome(d) {
   return page('Client', `<p style="margin:0 0 4px"><strong style="font-size:22px">Hello ${esc(String(d.who).split(/\s+/)[0])}</strong></p><p class="muted" style="margin:0">Your client area with ${esc(d.therapist)}.</p>
 <div class="grid">
@@ -343,6 +371,7 @@ ${d.pos ? `<section class="card"><h2>Your next session</h2>${d.next ? `<p><stron
 ${`<section class="card"><h2>My journal</h2><p class="muted">A private place to write. Only you can read it.</p><div class="links"><a href="/journal/entries">Open my journal</a></div></section>`}
 ${`<section class="card"><h2>How I feel</h2>${d.score ? `<p>This week: <strong>${d.score}</strong> out of 10.</p>` : '<p class="muted">You have not given this week\'s score yet.</p>'}<div class="links"><a href="/journal/score">${d.score ? 'See or change it' : 'Give this week\'s score'}</a></div></section>`}
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
+${installCard()}
 </div>`, 'wide', { who: d.who, home: '/journal' });
 }
 const whenFields = (id, at) => `<label for="d${id}">Date</label><input id="d${id}" name="date" type="date" required value="${at ? T.inputDate(at) : ''}">
@@ -374,7 +403,7 @@ function clientHelpPage(d) {
 <section class="card"><h2>Changing an appointment</h2><p class="muted">Open My sessions and use "Ask to change this". ${esc(d.therapist)} will be in touch to arrange it.</p><div class="links"><a href="/journal/sessions">My sessions</a></div></section>
 <section class="card"><h2>How I feel</h2><p class="muted">Once a week, give a score from 1 to 10. Only you and ${esc(d.therapist)} can see it.</p><div class="links"><a href="/journal/score">How I feel</a></div></section>
 ${d.relax ? `<section class="card"><h2>Relax</h2><p class="muted">A recording from ${esc(d.therapist)} to help you unwind.</p><div class="links"><a href="${esc(d.relax)}" target="_blank" rel="noopener">Open the recording</a></div></section>` : ''}
-<section class="card"><h2>If you need urgent help</h2><p class="muted">This page is not monitored. If you are in danger, call 999. For urgent health advice call NHS 111. If you are struggling to cope, Samaritans are available any time on 116 123.</p></section></div>`, 'wide', { who: d.who, home: '/journal' });
+<section class="card"><h2>If you need urgent help</h2><p class="muted">This page is not monitored. If you are in danger, call 999. For urgent health advice call NHS 111. If you are struggling to cope, Samaritans are available any time on 116 123.</p><div class="links"><a href="/journal/support">More ways to get support</a></div></section></div>`, 'wide', { who: d.who, home: '/journal' });
 }
 
 function clientSessionsPage(d, msg, ok) {
@@ -736,4 +765,4 @@ ${['address', 'phone', 'relationship'].map(k => `<label class="check"><input typ
 <button>Save</button></form><p><a href="/practice/forms">Back</a></p>`);
 }
 
-module.exports = { clientJournalPage, clientJournalEditPage, clientJournalEarlierPage, clientAccountPage, clientHelpPage, clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };
+module.exports = { clientSupportPage, clientRelaxPage, clientJournalPage, clientJournalEditPage, clientJournalEarlierPage, clientAccountPage, clientHelpPage, clientScorePage, scoreBars, sourcesPage, locationsPage, clientSessionsPage, archivePage, practiceHome, clientHome, signPage, signGone, signDone, formsBlock, feeInput, formatSelect, templateSelect, formTemplates, formTemplateEdit, programmes, enquiryManual, enquireForm, enquireThanks, therapistEnquiries, CHANNEL, STAGE, practiceStats, practiceSettings, clientLogin, clientSent, clientConfirm, linkExpired, staffLogin, staffVerify, chooseAccount, forbidden, shell, team, clients, clientAdd, clientRecord, therapistHome, clientSessions, book, schedule, feedLink, therapistAccount, mailSettings };

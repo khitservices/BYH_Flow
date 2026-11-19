@@ -5,6 +5,7 @@ const pwa = require('../lib/pwa');
 const A = require('../lib/auth');
 const router = express.Router();
 router.get('/app/manifest.webmanifest', (_req, res) => res.type('application/manifest+json').set('Cache-Control', 'no-cache').send(JSON.stringify(pwa.manifest())));
+router.get('/app/client.webmanifest', (_req, res) => res.type('application/manifest+json').set('Cache-Control', 'no-cache').send(JSON.stringify(pwa.clientManifest())));
 router.get('/app/icon-:size.png', (req, res) => { const s = Number(req.params.size); if (![180, 192, 512].includes(s)) return res.status(404).end(); res.type('png').set('Cache-Control', 'public, max-age=3600').send(pwa.icon(s)); });
 router.get('/app/sw.js', (_req, res) => res.type('application/javascript').set('Cache-Control', 'no-cache').send(pwa.SW));
 router.get('/app/enquiry', async (req, res, next) => {

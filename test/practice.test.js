@@ -616,6 +616,8 @@ test('reminders: weekly check-in once, appointment day-before, unsigned forms 3 
   await reminders.run(wed08); assert.equal(mine(em('wk1'), /weekly/i).length, 0);                                 // too early in the day
   await reminders.run(thu10); assert.equal(mine(em('wk1'), /weekly/i).length, 0);                                 // wrong day
   await reminders.run(wed10); assert.equal(mine(em('wk1'), /weekly check-in/i).length, 1);
+  assert.match(mine(em('wk1'), /weekly check-in/i)[0].html, /Add to your journal/);
+  assert.match(mine(em('wk1'), /weekly check-in/i)[0].html, /\/journal\/entries/);
   await reminders.run(wed10); await reminders.run(new Date('2027-03-10T15:00:00Z')); assert.equal(mine(em('wk1'), /weekly check-in/i).length, 1);   // never twice in a week
   assert.equal(mine(em('wkoff'), /weekly/i).length, 0);                                                            // reminders off
   assert.ok(!/therapy|hypno|anxiety/i.test(mine(em('wk1'), /weekly/)[0].html.replace(/Hi [^<]*|hypnotherapy/gi, '')));   // nothing clinical in the email

@@ -399,6 +399,15 @@ router.get('/journal/file/:id', myClient, async (req, res) => {
   if (!f) return res.status(404).send(V.forbidden());
   res.set({ 'Content-Type': f.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store', ...(f.mime === 'application/pdf' ? {} : { 'Content-Security-Policy': "default-src 'none'" }), 'Content-Disposition': `${f.inline ? 'inline' : 'attachment'}; filename="${f.name.replace(/[^A-Za-z0-9._ -]/g, '_')}"` }).send(f.buffer);
 });
+// ---- client: support numbers and the relaxation recording ----
+router.get('/journal/support', myClient, async (req, res) => {
+  const c = await one(`SELECT c.name, c.under16, s.name AS therapist FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [req.session.client.id]);
+  res.send(V.clientSupportPage({ who: c.name, therapist: c.therapist, childline: !!c.under16 }));
+});
+router.get('/journal/relax', myClient, async (req, res) => {
+  const c = await one(`SELECT c.name, s.name AS therapist, s.relax_url FROM clinical.clients c JOIN core.staff s ON s.id=c.therapist_id WHERE c.id=$1`, [req.session.client.id]);
+  res.send(V.clientRelaxPage({ who: c.name, therapist: c.therapist, url: c.relax_url }));
+});
 // ---- client: account, requests about their information, help ----
 const DMSG = { copy: ['Your request for a copy of your information has been passed to your therapist.', true], delete: ['Your request to delete your information has been passed to your therapist.', true],
   already: ['You already have that request open. Your therapist has it.', false], limited: ['Too many requests. Please try again later.', false], gone: ['That is not available.', false] };

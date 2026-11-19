@@ -341,3 +341,7 @@
 - **Who can add:** active clients. Read-only clients can read, not add or edit.
 - Migration 030 (clinical.journal_entries). Client menu gains "My journal"; the client home gets a card.
 - Not yet: weekly reminder wording does not mention the journal; deleting a client's journal files from the store when their information is deleted (deletion is manual for now, so files would remain in the store until that is built: add to the deletion work); search; therapist "ending soon" flags.
+- **Weekly reminder wording (Kev, 19 Nov):** the email now asks for both the score and a journal entry, with two buttons ("Give my score", "Write in my journal"). When it is sent is unchanged (only if no score yet that week).
+- **Support page** (client menu): tap-to-call cards for 999, Samaritans 116 123, Shout (text 85258), NHS 111, and Childline 0800 1111 for clients marked under 16 (as in BYH). Says plainly that the page is not watched by the therapist or practice.
+- **Relax page** (client menu): plays the therapist's recording link, or says none has been added yet.
+- **Install on phone:** the client area can now be added to a phone's home screen (own manifest, opens at the client home). Android/desktop Chrome get a button on the home page; iPhone/iPad get the Share steps. Nothing is cached on the phone.

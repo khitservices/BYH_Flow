@@ -113,4 +113,16 @@ test('journal: private to the client, files checked and encrypted, edit window, 
   assert.equal((await jo.upload('/journal/entries', { body: 'Not allowed' })).loc, '/journal/entries');
   assert.equal((await q(`SELECT count(*)::int n FROM clinical.journal_entries WHERE client_id=$1 AND body='Not allowed'`, [id]))[0].n, 0);
   assert.match((await jo.get('/journal/entries')).text, /read your journal but not add/);
+
+  // support, relax and install pages
+  await q(`UPDATE clinical.clients SET status='active' WHERE id=$1`, [id]);
+  const sup = (await jo.get('/journal/support')).text; assert.match(sup, /tel:999/); assert.match(sup, /116 123/); assert.match(sup, /85258/); assert.match(sup, /tel:111/); assert.ok(!/0800 1111/.test(sup));
+  await q(`UPDATE clinical.clients SET under16=true, consent_status='granted' WHERE id=$1`, [id]);
+  assert.match((await jo.get('/journal/support')).text, /0800 1111/);
+  assert.match((await jo.get('/journal/relax')).text, /not added a recording/);
+  await q(`UPDATE core.staff SET relax_url='https://example.test/relax' WHERE id=$1`, [t.id]);
+  assert.match((await jo.get('/journal/relax')).text, /href="https:\/\/example.test\/relax"/);
+  const home = (await jo.get('/journal')).text; assert.match(home, /id="installcard"/); assert.match(home, /client\.webmanifest/);
+  const man = JSON.parse((await client().get('/app/client.webmanifest')).text); assert.equal(man.start_url, '/journal');
+  assert.notEqual((await ct.get('/journal/support')).status, 200);     // clients only
 });
