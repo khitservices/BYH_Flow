@@ -323,3 +323,12 @@
 - Team, Programmes, Forms, Schedule, Book a session, Email settings and the therapist's My account now use the same card layout as the landing pages. Back links removed (the left menu replaces them).
 - Statistics (manager, and each therapist for their own): new "Where sessions happen" card, counting booked sessions by the place they were booked for (a place is copied onto the session when booked, so renaming a place later does not rewrite history). Counts only.
 - Client change requests and requests about their information now go through the same recorded-then-sent route as new enquiries (migration 028): a failed email is retried every 5 minutes, up to 5 times within 2 days. The client always sees their request as made. Failing that, it still shows on the client record and in the morning summary.
+
+## Kev's answers (19 Nov 2026)
+- **Contact details optional** on the public enquiry form and the therapist's form (migration 029 drops the has-contact rule). An email is still needed before a consultation can be booked (the invitation and calendar file go there); the enquiry card says so and lets the therapist add it.
+- **Signature stays typed name** plus timestamp and connection record. Drawn signature dropped from the backlog.
+- **Weekly score:** the latest value replaces the earlier one (no history). Unchanged.
+- **Logo on signed-form PDFs:** yes. Placed at the top of the first page when the practice has a PNG or JPEG logo (WebP cannot be placed in a PDF and is left off). Forms already signed are sealed and keep how they were made.
+- **Reminders switch** now covers the weekly check-in and appointment and consultation reminders. Label on the client record updated.
+- **Sources:** Leaflet/Flyer added to the list.
+- Peter Parker's forms: ignored (test data).

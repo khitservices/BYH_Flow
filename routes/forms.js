@@ -68,7 +68,8 @@ function readSigning(form, b) {
 
 async function seal(form, s, req) {
   const at = new Date(), ip = req.ip;
-  const pdf = await signedPdf(form.rendered, { ...s, at, ip, sha: form.content_sha256 }, brand.BRAND.practiceName);
+  const lg = await brand.getLogo();
+  const pdf = await signedPdf(form.rendered, { ...s, at, ip, sha: form.content_sha256 }, brand.BRAND.practiceName, lg && lg.logo_type !== 'image/webp' ? lg.logo : null);
   const fileId = await storage.put(pdf);
   const [done] = await q(`UPDATE documents.forms SET status='signed', signed_at=$2, signer=$3, signer_ip=$4, signer_agent=$5, file_id=$6, token_hash=NULL
     WHERE id=$1 AND status='sent' RETURNING id`, [form.id, at, JSON.stringify(s), ip || null, text(req.get('user-agent'), 300) || null, fileId]);

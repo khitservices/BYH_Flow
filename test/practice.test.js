@@ -92,7 +92,7 @@ test('public form: the practice form asks which therapist, a therapist page goes
 test('public form: bad input is refused, bots are ignored, and the form is rate limited', { skip }, async () => {
   const a = await addStaff('Thera Guard', 'therapist'); const anon = client();
   assert.equal((await post(anon, '/enquire', { therapist: a.id, name: '', email: em('x') })).status, 400);
-  assert.equal((await post(anon, '/enquire', { therapist: a.id, name: 'No Contact' })).status, 400);
+  assert.equal((await post(client('10.89.1.1'), '/enquire', { therapist: a.id, name: 'No Contact' })).status, 302);   // contact details are optional
   assert.equal((await post(anon, '/enquire', { therapist: a.id, name: 'Bad Mail', email: 'nope' })).status, 400);
   assert.equal((await post(anon, '/enquire', { name: 'No Therapist', email: em('nt') })).status, 400);
   assert.equal((await post(anon, '/enquire', { therapist: a.id, name: 'Child Missing', email: em('cm'), for_child: 'on' })).status, 400);
@@ -101,7 +101,7 @@ test('public form: bad input is refused, bots are ignored, and the form is rate 
   await q(`UPDATE core.staff SET status='active' WHERE id=$1`, [a.id]);
   assert.equal((await post(anon, '/enquire', { therapist: a.id, name: 'Robot', email: em('bot'), company: 'Spam Ltd' })).loc, '/enquire/thanks');
   assert.equal(await enq('Robot'), undefined);
-  assert.equal(await enq('No Contact'), undefined);
+  assert.ok(await enq('No Contact'));   // contact details are optional, so this one is kept
   let last; for (let i = 0; i < 6; i++) last = await post(anon, '/enquire', { therapist: a.id, name: 'Flood ' + i, email: em('f' + i) });
   assert.equal(last.status, 429);
 });
@@ -109,7 +109,7 @@ test('public form: bad input is refused, bots are ignored, and the form is rate 
 test('therapist pipeline: phone capture, booking the consultation makes them a client, did-not-proceed is archived and restorable', { skip }, async () => {
   const a = await addStaff('Thera Pipe', 'therapist'); const c = await staffIn(a.email);
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Phil', last_name: 'Phone', phone: '07700 900111', notes: 'rang Tuesday', enquiry_date: '2027-08-30' })).loc, '/therapist/enquiries?msg=added');
-  assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'No', last_name: 'Body' })).status, 400);
+  assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'No', last_name: 'Body' })).status, 302);   // contact details are optional
   let e = await enq('Phil Phone'); assert.equal(e.channel, 'phone'); assert.equal(e.notes, 'rang Tuesday'); assert.equal(e.stage, 'new');
   // no email on file: cannot be booked (they could not be invited to their client area), until one is added
   assert.equal((await post(c, `/therapist/enquiries/${e.id}`, { action: 'consult', date: '2027-09-02', time: '11:00' })).loc, '/therapist/enquiries?msg=need_email');
@@ -211,10 +211,13 @@ test('manual enquiry form (from the ITC app): adult and child fields, guardian, 
   const a = await addStaff('Thera Form', 'therapist'); const c = await staffIn(a.email);
   const form = (await c.get('/therapist/enquiries/new')).text;
   for (const f of ['first_name', 'last_name', 'email', 'phone', 'address', 'enquiry_date', 'ic_date', 'guardian_name', 'relationship', 'guardian_email', 'guardian_phone']) assert.match(form, new RegExp(`name="${f}"`));
-  assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Only', last_name: 'Name' })).status, 400);        // no contact
+  assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Only', last_name: 'Name' })).status, 302);        // contact details are optional
+  const onlyId = (await q(`SELECT id FROM clinical.enquiries WHERE name='Only Name' ORDER BY id DESC LIMIT 1`))[0].id;
+  assert.match((await post(c, `/therapist/enquiries/${onlyId}`, { action: 'consult', date: '2027-09-20', time: '10:00' })).loc, /msg=need_email/);   // but a consultation cannot be booked without an email address
+  assert.equal((await q(`SELECT 1 FROM clinical.clients WHERE name='Only Name'`)).length, 0);
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'child', first_name: 'No', last_name: 'Guardian', email: em('ng') })).status, 400); // child needs a guardian
   assert.equal((await post(c, '/therapist/enquiries/add', { type: 'adult', first_name: 'Bad', last_name: 'Date', email: em('bd'), ic_date: '2027-02-30' })).status, 400);
-  assert.equal(await enq('Only Name'), undefined);
+  assert.ok(await enq('Only Name'));   // kept without contact details
   const n = mail.outbox.length;
   const r = await post(c, '/therapist/enquiries/add', { type: 'child', first_name: 'Ben', last_name: 'Child', phone: '07700 900444', guardian_name: 'Gail Guardian', relationship: 'Aunt', guardian_email: em('gail'), address: '2 Low Road', ic_date: '2027-09-10', ic_time: '15:30' });
   assert.match(r.loc, /^\/therapist\/client\/\d+\?msg=ic_set/);                      // a consultation date makes them a client straight away
@@ -714,4 +717,28 @@ test('client request emails to the therapist are retried; sessions per location 
   await ct.post('/therapist/book', { client_id: id, date: '2027-09-13', time: '10:00', location: 'none' });
   const mine = (await ct.get('/therapist/stats')).text; assert.match(mine, /Where sessions happen/); assert.match(mine, /Online \(video call\)/); assert.match(mine, /No place set/);
   assert.match((await cp.get('/practice/stats')).text, /Where sessions happen/);
+});
+
+test('contact details optional on the public form; Leaflet/Flyer offered; reminders switch covers appointment reminders', { skip }, async () => {
+  const reminders = require('../lib/reminders');
+  const t = await addStaff('Thera Optional', 'therapist');
+  assert.equal((await client('10.88.1.1').post('/enquire', { therapist: t.id, name: 'No Contact' })).loc, '/enquire/thanks');
+  assert.equal((await q(`SELECT email, phone FROM clinical.enquiries WHERE name='No Contact' AND therapist_id=$1`, [t.id]))[0].email, null);
+  assert.ok((await q(`SELECT 1 FROM core.referral_sources WHERE name='Leaflet/Flyer' AND active`)).length);
+  const ct = await staffIn(t.email, '10.88.1.2'); await add(ct, { name: 'Switch Client', email: em('swc') });
+  const id = await idOf(em('swc')); await q(`INSERT INTO clinical.appointments (client_id, starts_at, status) VALUES ($1,'2027-04-12T14:00:00Z','booked')`, [id]);
+  const got = () => mail.outbox.filter(x => x.to === em('swc') && /Reminder: your appointment/.test(x.subject)).length;
+  await q(`UPDATE clinical.clients SET reminders_on=false WHERE id=$1`, [id]);
+  await reminders.run(new Date('2027-04-11T15:00:00Z')); assert.equal(got(), 0);                       // switched off: no appointment reminder either
+  await q(`UPDATE clinical.clients SET reminders_on=true WHERE id=$1`, [id]);
+  await reminders.run(new Date('2027-04-11T16:00:00Z')); assert.equal(got(), 1);
+});
+
+test('the practice logo is placed at the top of signed-form PDFs when there is one', { skip }, async () => {
+  const { signedPdf } = require('../lib/pdf'), png = require('../lib/pwa').icon(64);
+  const rendered = { title: 'T', intro: ['a'], sections: [], signing_intro: '', signer_fields: [], choices: [], closing: [], footer: [] };
+  const sig = { name: 'X', choices: {}, at: new Date(), ip: '1.1.1.1', sha: 'abc' };
+  assert.ok((await signedPdf(rendered, sig, 'P', png)).includes('/Subtype /Image'));
+  assert.ok(!(await signedPdf(rendered, sig, 'P', null)).includes('/Subtype /Image'));
+  assert.ok((await signedPdf(rendered, sig, 'P', Buffer.from('not an image'))).length > 500);          // an unreadable logo never stops a form being signed
 });

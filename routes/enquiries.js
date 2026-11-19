@@ -82,7 +82,6 @@ router.post('/enquire', async (req, res) => {
   const again = async msg => res.status(400).send(V.enquireForm({ therapists: b.slug ? null : await activeTherapists(), therapist: b.slug ? therapist : null, slug: b.slug, src, heard: b.heard, campaign: campaignOf(b.campaign), pick: therapist && therapist.id, f, error: msg }));
   if (!therapist) return again('Please choose who you would like to hear from.');
   if (!f.name) return again('Please enter your name.');
-  if (!f.email && !f.phone) return again('Please give an email address or a phone number so we can reply.');
   if (f.email && !EMAIL_RE.test(f.email)) return again('That email address does not look right.');
   if (f.for_child && !f.child_name) return again("Please enter the child's name.");
   // Limit counts accepted enquiries only, so a typo in the form never locks anyone out.
@@ -135,7 +134,6 @@ router.post('/therapist/enquiries/add', th, async (req, res) => {
   if (f.email && !EMAIL_RE.test(f.email)) return again('That email address does not look right.');
   if (f.guardian_email && !EMAIL_RE.test(f.guardian_email)) return again("The parent or guardian's email address does not look right.");
   if (child && !f.guardian_name) return again("Enter the parent or guardian's name.");
-  if (!f.email && !f.phone && !(child && (f.guardian_email || f.guardian_phone))) return again('Add an email address or a phone number.');
   const ed = f.enquiry_date && /^\d{4}-\d{2}-\d{2}$/.test(f.enquiry_date) && !isNaN(new Date(f.enquiry_date)) ? f.enquiry_date : T.inputDate(new Date());
   let ic = null;
   if (f.ic_date) { ic = T.fromLocal(f.ic_date, f.ic_time); if (!ic) return again('Enter a real consultation date and time.'); }

@@ -226,7 +226,7 @@ ${sec('How they have been feeling', `${c.scores && c.scores.some(s => s.score) ?
 ${pre || c.archived_at ? '' : sec('Blocks of sessions', `${(c.blocks || []).map(b => `<p style="margin:0 0 6px"><strong>Block ${b.number}${b.name ? `: ${esc(b.name)}` : ''}</strong> ${b.id === c.current_block_id && c.status !== 'closed' ? '<span class="muted">(current)</span>' : ''}<br><span class="muted">${b.sessions} session${b.sessions === 1 ? '' : 's'}${b.price_pence != null ? ` · ${money(b.price_pence)}` : ''} · ${b.held + b.sessions_before_app} of ${b.sessions} had · started ${day(b.started_at)}${b.ended_at ? `, ended ${day(b.ended_at)}` : ''}</span></p>`).join('')}
 <details><summary>Start a further block or a single session</summary>${post('new_block', `<label for="nb">Programme</label><select id="nb" name="programme" ${sel}>${programmeOpts(c.programmes || [], '')}</select>
 <label class="check"><input type="checkbox" name="end_early"> End the current block early if it still has sessions to come</label><button class="alt">Start new block</button>`)}<p class="muted">No new forms are needed. Earlier blocks stay on record; sessions you book from now count against the new block.</p></details>`)}
-${closed || pre ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send a weekly reminder</label>
+${closed || pre ? '' : sec('Weekly journal reminder', post('reminders', `<label class="check"><input type="checkbox" name="reminders_on" ${c.reminders_on ? 'checked' : ''}> Send reminders (the weekly check-in and appointment reminders)</label>
 <label for="rd">Day</label><select id="rd" name="reminder_dow" ${sel}>${dayOpts(c.reminder_dow)}</select><button class="alt">Save reminder setting</button>`))}
 ${pre && !c.archived_at ? sec(c.status === 'attended' ? 'Forms sent: next, do they proceed?' : 'After the consultation', `${(c.templates || []).length ? `<details ${c.status === 'attended' ? '' : 'open'}><summary>${c.status === 'attended' || (c.forms || []).length ? 'Send the form again' : 'Mark as attended and send forms'}</summary>${post('attended', `${templateSelect('a', c.templates)}${feeInput('a', c.fee_pence)}${formatSelect('a')}<button>${(c.forms || []).length ? 'Send again' : 'Attended: send for signing'}</button>`)}<p class="muted">${c.under16 ? 'It goes to the parent or guardian.' : 'It goes to the client.'} They read and sign it in the app.</p></details>` : '<p class="muted">No forms are set up for this kind of client yet.</p>'}
 <details ${c.status === 'attended' ? 'open' : ''}><summary>They are going ahead: choose a programme</summary>${post('proceed', `<label for="pp">Programme</label><select id="pp" name="programme" ${sel}>${programmeOpts(c.programmes || [], c.programme_id)}</select>
@@ -516,7 +516,7 @@ function enquireForm({ therapists, therapist, slug, src, heard, campaign, pick, 
 <label for="n">Your name</label><input id="n" name="name" required maxlength="100" value="${esc(f.name)}">
 <label for="e">Email</label><input id="e" name="email" type="email" value="${esc(f.email)}">
 <label for="p">Phone</label><input id="p" name="phone" type="tel" value="${esc(f.phone)}">
-<p class="muted" style="margin:2px 0">An email or a phone number is needed.</p>
+<p class="muted" style="margin:2px 0">An email address or phone number helps us reply, but you can leave both blank.</p>
 <label class="check"><input type="checkbox" name="for_child" ${f.for_child ? 'checked' : ''}> This enquiry is for a child under 16</label>
 <label for="c">Child's name (if applicable)</label><input id="c" name="child_name" maxlength="100" value="${esc(f.child_name)}">
 <div style="position:absolute;left:-9999px" aria-hidden="true"><label for="co">Leave this empty</label><input id="co" name="company" tabindex="-1" autocomplete="off"></div>
@@ -595,7 +595,7 @@ function enquiryManual(f = {}, msg, srcs = []) {
 <label for="ge">Their email</label><input id="ge" name="guardian_email" type="email" value="${esc(f.guardian_email)}">
 <label for="gp">Their telephone</label><input id="gp" name="guardian_phone" type="tel" value="${esc(f.guardian_phone)}"></fieldset>
 <label for="nt">Notes (optional)</label><input id="nt" name="notes" maxlength="1000" value="${esc(f.notes)}">
-<p class="muted">An email or phone number is needed. If you set a consultation date they become a client ("Consultation booked") straight away and are emailed the date, a calendar file and an invitation to their client area. That needs an email address (the parent or guardian's, for a child).</p>
+<p class="muted">Email and phone are optional (you can add them later). An email address is needed before a consultation can be booked. If you set a consultation date they become a client ("Consultation booked") straight away and are emailed the date, a calendar file and an invitation to their client area. That needs an email address (the parent or guardian's, for a child).</p>
 <button>Save enquiry</button></form><p><a href="/therapist/enquiries">Back</a></p>`);
 }
 
