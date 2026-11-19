@@ -158,7 +158,12 @@ test('retention: periods worked out, journal deleted on request, records deleted
   const old = "status='closed', closed_at=now() - interval '8 years', created_at=now() - interval '9 years'";
   const due = await mk('due', old), held = await mk('held', old), young = await mk('young', "status='closed', closed_at=now() - interval '2 years'"), act = await mk('act', "created_at=now() - interval '9 years'");
   const kid = await mk('kid', old + ", under16=true, consent_status='granted'"), kidDob = await mk('kiddob', old + ", under16=true, consent_status='granted', date_of_birth=(now() - interval '14 years')::date");
-  const arch = await mk('arch', old + ", archived_at=now()");
+  const arch = await mk('arch', old + ", archived_at=now()");     // archived just now: kept
+  const archOld = await mk('archold', "status='closed', closed_at=now() - interval '13 months', archived_at=now() - interval '13 months', closed_reason='did_not_proceed'");
+  const archYoung = await mk('archyoung', "status='closed', closed_at=now() - interval '11 months', archived_at=now() - interval '11 months', closed_reason='did_not_proceed'");
+  const eOld = (await q(`INSERT INTO clinical.enquiries (therapist_id, channel, name, email, archived_at, archive_reason) VALUES ($1,'website','Enq old',$2,now() - interval '13 months','manual') RETURNING id`, [t.id, em('enqold')]))[0].id;
+  const eYoung = (await q(`INSERT INTO clinical.enquiries (therapist_id, channel, name, email, archived_at, archive_reason) VALUES ($1,'website','Enq young',$2,now() - interval '11 months','manual') RETURNING id`, [t.id, em('enqyoung')]))[0].id;
+  const eOpen = (await q(`INSERT INTO clinical.enquiries (therapist_id, channel, name, email, created_at) VALUES ($1,'website','Enq open',$2,now() - interval '3 years') RETURNING id`, [t.id, em('enqopen')]))[0].id;
   await q(`UPDATE clinical.clients SET retention_hold=true, retention_hold_note='complaint' WHERE id=$1`, [held]);
   const pdf = await storage.put(Buffer.from('signed pdf')), jf = await storage.put(Buffer.from('journal file'));
   const enq = (await q(`INSERT INTO clinical.enquiries (therapist_id, channel, name, email, stage, converted_client_id) VALUES ($1,'website','Ret due',$2,'converted',$3) RETURNING id`, [t.id, em('due'), due]))[0].id;
@@ -173,6 +178,9 @@ test('retention: periods worked out, journal deleted on request, records deleted
   assert.equal((await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE id=$1`, [enq]))[0].n, 0);
   assert.ok(!fs.existsSync(on(pdf)) && !fs.existsSync(on(jf)), 'signed PDF and journal file removed from the store');
   const au = (await q(`SELECT detail FROM core.audit_log WHERE action='client.record_deleted' AND subject_id=$1`, [due]))[0]; assert.ok(au); assert.ok(!/Ret due|example\.test/.test(JSON.stringify(au.detail)));   // a record that it happened, with no personal details
+  assert.ok(await gone(archOld), 'did not proceed, over a year ago: deleted'); assert.ok(!(await gone(archYoung)), 'did not proceed, under a year ago: kept');
+  const enqGone = async id => (await q(`SELECT count(*)::int n FROM clinical.enquiries WHERE id=$1`, [id]))[0].n === 0;
+  assert.ok(await enqGone(eOld)); assert.ok(!(await enqGone(eYoung))); assert.ok(!(await enqGone(eOpen)), 'an enquiry still open is never deleted this way');
   assert.equal(await R.run(), 0);                                                                                                // nothing left to do
 
   // therapist screens: retention date shown, date of birth needed for a child, hold needs a reason
