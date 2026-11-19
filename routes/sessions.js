@@ -134,9 +134,13 @@ router.post('/therapist/session/:id', th, async (req, res) => {
 
 // ---- schedule: the next 60 days across this therapist's clients ----
 router.get('/therapist/schedule', th, async (req, res) => {
-  const rows = await q(`SELECT a.*, c.name AS client_name, c.under16 FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
+  const sessions = await q(`SELECT a.*, c.name AS client_name, c.under16, 'session' AS kind FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
     WHERE c.therapist_id=$1 AND c.status <> 'closed' AND a.status='booked' AND a.starts_at > now() - interval '2 hours'
-      AND a.starts_at < now() + interval '60 days' ORDER BY a.starts_at`, [req.session.staff.id]);
+      AND a.starts_at < now() + interval '60 days'`, [req.session.staff.id]);
+  // People waiting for their initial consultation appear too, marked as such.
+  const cons = await q(`SELECT c.id, c.id AS client_id, c.ic_at AS starts_at, c.name AS client_name, c.under16, 'consultation' AS kind FROM clinical.clients c
+    WHERE c.therapist_id=$1 AND c.status='consultation' AND c.archived_at IS NULL AND c.ic_at > now() - interval '2 hours' AND c.ic_at < now() + interval '60 days'`, [req.session.staff.id]);
+  const rows = [...sessions, ...cons].sort((x, y) => x.starts_at - y.starts_at);
   const [msg, ok] = flash(req);
   res.status(ok === false ? 400 : 200).send(V.schedule(rows, { hasFeed: !!req.session.staff.cal_feed_hash }, msg, ok, await locsFor(req)));
 });
@@ -173,8 +177,11 @@ router.get('/cal/:token.ics', async (req, res) => {
   if (!staff) return res.status(404).send('Not found');
   const rows = await q(`SELECT a.*, c.name AS client_name FROM clinical.appointments a JOIN clinical.clients c ON c.id=a.client_id
     WHERE c.therapist_id=$1 AND a.status='booked' AND a.starts_at > now() - interval '30 days' ORDER BY a.starts_at`, [staff.id]);
+  // Initial consultations too, with the same identity as the invitation the client was sent, so a calendar does not show them twice.
+  const cons = await q(`SELECT c.id, c.ic_at AS starts_at, 60 AS duration_min, c.ic_sequence AS ics_sequence, 'consultation' AS uid_kind, c.name AS client_name
+    FROM clinical.clients c WHERE c.therapist_id=$1 AND c.status='consultation' AND c.archived_at IS NULL AND c.ic_at > now() - interval '30 days'`, [staff.id]);
   res.set({ 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=300' })
-    .send(ics.calendar('PUBLISH', rows.map(a => ics.vevent(a, { title: `Session: ${shortName(a.client_name)}` })), `${brand.BRAND.practiceShort} sessions`));
+    .send(ics.calendar('PUBLISH', [...rows.map(a => ics.vevent(a, { title: `Session: ${shortName(a.client_name)}` })), ...cons.map(a => ics.vevent(a, { title: `Consultation: ${shortName(a.client_name)}` }))], `${brand.BRAND.practiceShort} sessions`));
 });
 
 module.exports = { router, book };

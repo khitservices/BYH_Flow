@@ -50,7 +50,10 @@ router.get('/therapist', th, async (req, res) => {
       (SELECT count(*) FROM clinical.enquiries WHERE therapist_id=$1 AND stage='new' AND archived_at IS NULL)::int AS enq_new,
       (SELECT count(*) FROM clinical.clients WHERE therapist_id=$1 AND status IN ('consultation','attended') AND archived_at IS NULL)::int AS consults,
       (SELECT count(*) FROM documents.forms WHERE therapist_id=$1 AND status='sent')::int AS forms_waiting`, [me.id]);
-  res.send(V.therapistHome({ who: me.name, today: today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })),
+  const signed = await q(`SELECT f.id, f.client_id, f.rendered->>'title' AS title, f.signed_at, COALESCE(c.name, e.name) AS name FROM documents.forms f
+      LEFT JOIN clinical.clients c ON c.id=f.client_id LEFT JOIN clinical.enquiries e ON e.id=f.enquiry_id
+    WHERE f.therapist_id=$1 AND f.status='signed' AND f.therapist_seen_at IS NULL AND f.signed_at > now() - interval '30 days' ORDER BY f.signed_at DESC LIMIT 20`, [me.id]);
+  res.send(V.therapistHome({ signed: signed.map(f => ({ ...f, when: T.when(f.signed_at) })), who: me.name, today: today.map(a => ({ time: T.timeShort(a.starts_at), name: a.name })),
     clients: { active: d.active, wants_change: d.wants_change, consultations: d.consults }, enquiries: { new: d.enq_new }, forms_waiting: d.forms_waiting }));
 });
 

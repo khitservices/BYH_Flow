@@ -256,6 +256,9 @@ function therapistHome(d) {
 <div class="links"><a href="/therapist/enquiries">Open enquiries</a><a href="/therapist/enquiries/new">Add an enquiry</a></div></section>
 <section class="card"><h2>Clients</h2><span class="stat">${d.clients.active}</span><p class="muted">active${d.clients.consultations ? ` · ${n(d.clients.consultations, 'consultation', 'consultations')} coming up` : ''}${d.clients.wants_change ? ` · <strong style="color:#8a4a00">${n(d.clients.wants_change, 'client has', 'clients have')} asked to change a session</strong>` : ''}</p>
 <div class="links"><a href="/therapist/clients">Your clients</a><a href="/therapist/clients/add">Add a client</a></div></section>
+${(d.signed || []).length ? `<section class="card" style="grid-column:1/-1;border:2px solid #4a7c8c"><h2>Recently signed</h2>${d.signed.map(f => `<form method="post" action="/therapist/forms/seen" style="margin:0 0 8px"><input type="hidden" name="id" value="${f.id}"><strong>${esc(f.name)}</strong> signed <strong>${esc(f.title)}</strong> <span class="muted">${esc(f.when)}</span>
+ &nbsp; <a href="/therapist/forms/${f.id}/pdf" target="_blank">Open it</a>${f.client_id ? ` · <a href="/therapist/client/${f.client_id}">Their record</a>` : ''} &nbsp; <button class="alt" style="padding:2px 10px">Done</button></form>`).join('')}
+<form method="post" action="/therapist/forms/seen"><button class="alt">Mark all as seen</button></form></section>` : ''}
 <section class="card"><h2>Forms</h2><span class="stat">${d.forms_waiting}</span><p class="muted">waiting to be signed</p>
 <div class="links"><a href="/therapist/enquiries">Enquiries</a><a href="/therapist/clients">Clients</a></div></section>
 <section class="card"><h2>Your account</h2><p class="muted">Your details for forms, calendar link, relaxation link and handing over clients.</p>
@@ -461,7 +464,7 @@ ${whenFields('b')}${locField('b', locs, 'book')}<button>Book</button></form>` : 
 function schedule(rows, feed, msg, ok, locs) {
   let lastDay = '';
   const line = a => { const d = T.dateLong(a.starts_at); const head = d !== lastDay ? `<p style="margin:14px 0 4px"><strong>${esc(d)}</strong></p>` : ''; lastDay = d;
-    return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${whereText(a) ? `<br><span class="muted">${esc(whereText(a))}</span>` : ''}${changeAsk(a)}</p>${sessionActions(a, 'schedule', locs)}</div>`; };
+    return `${head}<div style="border-top:1px solid #eee;padding:8px 0"><p style="margin:0">${esc(T.timeShort(a.starts_at))} &nbsp; <a href="/therapist/client/${a.client_id}">${esc(a.client_name)}</a>${a.kind === 'consultation' ? ' <strong>initial consultation</strong>' : ''}${a.under16 ? ' <span class="muted">(under 16)</span>' : ''}${a.kind === 'consultation' ? '' : whereText(a) ? `<br><span class="muted">${esc(whereText(a))}</span>` : ''}${a.kind === 'consultation' ? '' : changeAsk(a)}</p>${a.kind === 'consultation' ? '<p class="muted" style="margin:4px 0 0">Change it from their record.</p>' : sessionActions(a, 'schedule', locs)}</div>`; };
   return wide('Schedule', `<p style="margin:0 0 4px"><strong style="font-size:22px">Schedule</strong></p><p class="muted" style="margin:0">The next 60 days.</p>${note(msg, ok)}
 <div class="grid"><section class="card" style="grid-column:span 2"><h2>Booked</h2>${rows.length ? rows.map(line).join('') : '<p class="muted">Nothing booked.</p>'}<div class="links"><a href="/therapist/book">Book a session</a></div></section>
 <section class="card"><h2>See this in your own calendar</h2>

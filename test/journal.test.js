@@ -192,3 +192,18 @@ test('retention: periods worked out, journal deleted on request, records deleted
   assert.equal(R.dateOnly((await q(`SELECT date_of_birth AS d FROM clinical.clients WHERE id=$1`, [act]))[0].d), '1990-05-04');
   assert.match((await ct.get(`/therapist/client/${act}`)).text, /value="1990-05-04"/);                                     // shown back as entered, whatever the server's time zone
 });
+
+test('schedule and calendar link include initial consultations', { skip }, async () => {
+  const t = await addStaff('Thera Cons', 'therapist'), ct = await staffIn(t.email, '10.90.1.1');
+  await add(ct, { name: 'Cons Waiting', email: em('cw') }); await add(ct, { name: 'Cons Archived', email: em('ca') }); await add(ct, { name: 'Cons Past', email: em('cp') });
+  const w = await idOf(em('cw'));
+  await q(`UPDATE clinical.clients SET status='consultation', ic_at=now() + interval '2 days' WHERE id=$1`, [w]);
+  await q(`UPDATE clinical.clients SET status='consultation', ic_at=now() + interval '2 days', archived_at=now() WHERE email=$1`, [em('ca')]);
+  await q(`UPDATE clinical.clients SET status='attended', ic_at=now() + interval '1 day' WHERE email=$1`, [em('cp')]);
+  const sch = (await ct.get('/therapist/schedule')).text;
+  assert.match(sch, /Cons Waiting<\/a> <strong>initial consultation<\/strong>/); assert.ok(!/Cons Archived|Cons Past/.test(sch));
+  const link = (await ct.post('/therapist/schedule/feed', {})).text.match(/value="([^"]+\/cal\/[a-f0-9]{64}\.ics)"/)[1];
+  const feed = (await client().get(link.replace(/^https?:\/\/[^/]+/, ''))).text;
+  assert.match(feed, /SUMMARY:Consultation: Cons W\./); assert.ok(!/Cons A\.|Cons P\./.test(feed));
+  assert.match(feed, new RegExp('UID:' + require('../lib/ics').uid(w, 'consultation').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));   // same identity as the emailed invitation
+});

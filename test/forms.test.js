@@ -28,12 +28,12 @@ test.after(async () => {
   server.close(); await require('../lib/db').pool.end();
 });
 
-function client() {
+function client(ip) {
   const jar = {};
   const call = async (method, path, form) => {
     const r = await fetch(base + path, {
       method, redirect: 'manual',
-      headers: { cookie: Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { ...(ip ? { 'x-forwarded-for': ip } : {}), cookie: Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' },
       body: form ? new URLSearchParams(form).toString() : undefined,
     });
     for (const c of r.headers.getSetCookie()) { const [kv] = c.split(';'); const i = kv.indexOf('='); jar[kv.slice(0, i)] = kv.slice(i + 1); }
@@ -43,8 +43,8 @@ function client() {
 }
 const addStaff = (n, role) => q(`INSERT INTO core.staff (name,email,role) VALUES ($1,$2,$3) RETURNING *`, [n, em(n), role]).then(r => r[0]);
 const last = (to, re) => [...mail.outbox].reverse().find(x => x.to === to && re.test(x.subject));
-async function staffIn(email) {
-  const c = client(); await c.post('/staff/request-code', { email });
+async function staffIn(email, ip) {
+  const c = client(ip); await c.post('/staff/request-code', { email });
   await c.post('/staff/verify', { email, code: last(email, /sign-in code/).html.match(/>(\d{6})</)[1] });
   return c;
 }
@@ -98,11 +98,15 @@ test('attended → form emailed → signed in the app → stored in the client f
   assert.match(f.content_sha256, /^[a-f0-9]{64}$/);
   const copy = mail.outbox.slice(n2).find(x => x.to === em('alice')); assert.ok(copy.attachments[0].content.subarray(0, 5).toString() === '%PDF-');
   const notice = mail.outbox.slice(n2).find(x => x.to === a.email); assert.ok(notice); assert.ok(!notice.html.includes('Alice') && !notice.html.includes('1 High Street'));
+  // the therapist's home page announces it until they open it
+  const thome = (await ca.get('/therapist')).text; assert.match(thome, /Recently signed/); assert.match(thome, /Alice Adult<\/strong> signed/);
   assert.equal((await anon.get(`/sign/${token}`)).status, 404);                                                        // link is spent
   assert.equal((await post(anon, `/sign/${token}`, signBody())).status, 404);
   // the therapist can open it; nobody else can
   assert.equal((await anon.get(`/therapist/forms/${f.id}/pdf`)).status, 302);   // signed out: sent to sign in
   const mine = await ca.get(`/therapist/forms/${f.id}/pdf`); assert.equal(mine.status, 200); assert.match(mine.text.slice(0, 8), /%PDF-/);
+  assert.ok(!/Recently signed/.test((await ca.get('/therapist')).text), 'opening the signed copy clears it from the home page');
+  assert.ok(!/Recently signed/.test((await cb.get('/therapist')).text), 'another therapist never sees it');
   assert.equal((await cb.get(`/therapist/forms/${f.id}/pdf`)).status, 404);
   assert.equal((await cp.get(`/therapist/forms/${f.id}/pdf`)).status, 403);
   assert.match((await ca.get(`/therapist/client/${e.id}`)).text, /Signed/);
@@ -193,4 +197,37 @@ test('form templates: the manager adds and edits them, sent forms keep their wor
   assert.equal((await post(ct, `/therapist/client/${e.id}`, { action: 'attended', template: tpl.id, fee: '45', session_format: 'inperson' })).loc, `/therapist/client/${e.id}?msg=form_template`);
   assert.match((await cp.get('/practice')).text, /<h2>Forms<\/h2>/);
   await q(`DELETE FROM documents.forms WHERE template_id=$1`, [tpl.id]); await q(`DELETE FROM core.form_templates WHERE id=$1`, [tpl.id]);
+});
+
+test('signed form: a failed email to the signer is retried, the therapist notice is retried, dismiss works', { skip }, async () => {
+  const notify = require('../lib/notify');
+  const a = await addStaff('Thera Retry', 'therapist'), ca = await staffIn(a.email, '10.91.1.1'), anon = client('10.91.1.2');
+  await post(ca, '/therapist/account', { action: 'details', qualifications: 'DipSFH', address: '52 Long Road', postcode: 'CM7 1XS', phone: '01376 000000', default_fee: '60' });
+  const e = await book(ca, { first_name: 'Rita', last_name: 'Retry', email: em('ritaretry'), phone: '07700 900777' }), tpl = await tplId('adult');
+  const n = mail.outbox.length;
+  const att = await post(ca, `/therapist/client/${e.id}`, { action: 'attended', template: tpl, fee: '60', session_format: 'online' }); assert.equal(att.loc, `/therapist/client/${e.id}?msg=attended`, att.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300));
+  const token = linkOf(em('ritaretry'), n); assert.ok(token);
+  const n2 = mail.outbox.length;
+  mail.testHooks.failNext = true;                                   // the first email out (the signer's copy) fails
+  assert.match((await post(anon, `/sign/${token}`, signBody({ signer_name: 'Rita Retry' }))).text, /is signed/);   // signing itself is never blocked by email
+  const f = (await q(`SELECT * FROM documents.forms WHERE client_id=$1`, [e.id]))[0];
+  assert.equal(f.status, 'signed'); assert.equal(f.copy_sent_at, null); assert.equal(f.copy_attempts, 1);
+  assert.ok(!mail.outbox.slice(n2).some(x => x.to === em('ritaretry')), 'no copy yet');
+  assert.ok(mail.outbox.slice(n2).some(x => x.to === a.email), 'the therapist notice still went');
+  assert.equal(await notify.retryCopies(), 0, 'too soon to retry');
+  await q(`UPDATE documents.forms SET signed_at = now() - interval '2 minutes' WHERE id=$1`, [f.id]);
+  assert.equal(await notify.retryCopies(), 1);
+  const copy = mail.outbox.slice(n2).find(x => x.to === em('ritaretry')); assert.ok(copy); assert.equal(copy.attachments[0].content.subarray(0, 5).toString(), '%PDF-');
+  assert.equal(await notify.retryCopies(), 0, 'sent once only');
+  assert.ok((await q(`SELECT copy_sent_at FROM documents.forms WHERE id=$1`, [f.id]))[0].copy_sent_at);
+  // therapist notice failing is retried too
+  await q(`UPDATE documents.forms SET status='sent' WHERE id=$1`, [f.id]); await q(`UPDATE documents.forms SET status='signed' WHERE id=$1`, [f.id]);
+  const before = mail.outbox.length; mail.testHooks.failNext = true;
+  assert.equal(await notify.queueNotice(a.id, 'signed', f.id), false);
+  await q(`UPDATE core.notices SET created_at = now() - interval '2 minutes' WHERE ref_id=$1 AND sent_at IS NULL`, [f.id]);
+  assert.ok(await notify.retryNotices() >= 1); assert.ok(mail.outbox.slice(before).some(x => x.to === a.email && /signed/i.test(x.subject)));
+  // dismiss from the home page
+  assert.match((await ca.get('/therapist')).text, /Rita Retry<\/strong> signed/);
+  await ca.post('/therapist/forms/seen', { id: String(f.id) });
+  assert.ok(!/Recently signed/.test((await ca.get('/therapist')).text));
 });

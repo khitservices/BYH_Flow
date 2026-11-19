@@ -75,11 +75,10 @@ async function seal(form, s, req) {
     WHERE id=$1 AND status='sent' RETURNING id`, [form.id, at, JSON.stringify(s), ip || null, text(req.get('user-agent'), 300) || null, fileId]);
   if (!done) { await storage.remove(fileId).catch(() => {}); return false; }   // someone signed it a moment ago
   await audit(req, 'form.signed', { actorType: form.client_id && req.session && req.session.client ? 'client' : 'public', subjectType: 'form', subjectId: form.id });
-  try { // a copy to the signer, and a plain notice (no details) to the therapist
-    await mail.sendFrom(form.therapist_id, form.sent_to, form.rendered.title, mail.formSignedEmail(s.name, form.rendered.title), null, { attachments: [{ filename: `${form.rendered.title}.pdf`, content: pdf, contentType: 'application/pdf' }] });
-    const t = await one(`SELECT name, email FROM core.staff WHERE id=$1`, [form.therapist_id]);
-    await mail.sendMail(t.email, 'A form has been signed', mail.formSignedNoticeEmail(t.name, form.rendered.title));
-  } catch (e) { console.error('[forms] signed email failed:', e.message); }
+  // A copy to the signer and a plain notice (no details) to the therapist. Each is recorded first and retried in the background if the send fails.
+  const notify = require('../lib/notify');
+  await notify.sendSignerCopy(form.id).catch(e => console.error('[forms] signed copy failed:', e.message));
+  await notify.queueNotice(form.therapist_id, 'signed', form.id).catch(e => console.error('[forms] signed notice failed:', e.message));
   return true;
 }
 
@@ -127,8 +126,15 @@ function sendPdf(res, f, buf) {
 router.get('/therapist/forms/:id/pdf', th, async (req, res) => {
   const f = await one(`SELECT * FROM documents.forms WHERE id=$1 AND therapist_id=$2 AND status='signed'`, [Number(req.params.id) || 0, req.session.staff.id]);
   if (!f) return res.status(404).send(V.forbidden());
+  await q(`UPDATE documents.forms SET therapist_seen_at=COALESCE(therapist_seen_at, now()) WHERE id=$1`, [f.id]);
   await audit(req, 'form.viewed', { actorType: 'staff', actorId: req.session.staff.id, subjectType: 'form', subjectId: f.id });
   sendPdf(res, f, await storage.get(f.file_id));
+});
+
+// "Recently signed" on the therapist's home page: dismiss one, or all.
+router.post('/therapist/forms/seen', th, async (req, res) => {
+  await q(`UPDATE documents.forms SET therapist_seen_at=COALESCE(therapist_seen_at, now()) WHERE therapist_id=$1 AND status='signed' AND ($2::int IS NULL OR id=$2)`, [req.session.staff.id, Number(req.body.id) || null]);
+  res.redirect('/therapist');
 });
 
 // ---- practice manager: form templates ----
